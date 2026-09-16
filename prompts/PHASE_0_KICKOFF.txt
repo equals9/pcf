@@ -1,0 +1,51 @@
+Read CLAUDE.md and SPEC.md completely before modifying anything.
+
+SPEC.md is the frozen and authoritative PCF v0.1 build contract. Do not reinterpret it as a brainstorming document and do not expand product scope.
+
+Your current assignment is PHASE 0 ONLY.
+
+Before coding:
+1. Inspect the local development environment and repository.
+2. Read every section of SPEC.md relevant to Phase 0, testing, change control, explicit non-goals, and Definition of Done.
+3. Read CLAUDE.md and obey its authority hierarchy and phase-completion protocol.
+4. Update BUILD_STATUS.md with:
+   - current phase
+   - requirements for this phase
+   - implementation plan
+   - acceptance gates
+   - blockers, if any
+5. Put any genuinely unresolved product/spec issue in OPEN_QUESTIONS.md. Do not invent requirements to fill gaps.
+
+Then execute Phase 0 exactly as specified.
+
+Constraints:
+- Do not begin Phase 1.
+- Do not implement anything from docs/ unless SPEC.md explicitly requires it.
+- Do not add features not required by Phase 0.
+- Do not add authentication, cloud services, Supabase, Firebase, vector databases, embeddings, agent frameworks, plugin systems, dashboards, or additional product surfaces.
+- Prefer the smallest implementation that satisfies SPEC.md.
+- Preserve local-first, single-user architecture.
+- Use tests as acceptance gates.
+- Do not use the Anthropic API SDK or require ANTHROPIC_API_KEY.
+- Do not change SPEC.md.
+
+Phase 0 is complete only when its required scaffold exists and:
+
+npm test
+
+and
+
+npm run build
+
+both pass.
+
+When Phase 0 is green:
+1. update BUILD_STATUS.md,
+2. summarize exactly what was created,
+3. show the acceptance-test results,
+4. list new dependencies and justify each,
+5. list any deviations from SPEC.md,
+6. list any open questions or blockers,
+7. STOP.
+
+Do not proceed to Phase 1 until I explicitly tell you to continue.
