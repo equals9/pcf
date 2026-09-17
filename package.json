@@ -10,13 +10,15 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "migrate": "tsx scripts/migrate.ts"
+    "migrate": "tsx scripts/migrate.ts",
+    "seed": "tsx scripts/seed-demo.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
     "next": "^16.3.5",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
