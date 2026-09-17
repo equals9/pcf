@@ -1,9 +1,205 @@
 # PCF Build Status
 
 ## Current phase
-Phase 2 — Claude subscription adapter: APPROVED 2026-09-16, checkpointed at tag `pcf-v0.1-phase-2`.
-Phase 3 has not started and requires explicit authorization.
-Phase 1 approved and checkpointed at commit `cf81676`, tag `pcf-v0.1-phase-1`.
+Phase 3 — Capture intelligence: COMPLETE and approved, including the capture route and Today capture UI. Checkpointed with tag `pcf-v0.1-phase-3`. Phase 4 not started.
+Phase 2 approved and checkpointed at commit `dff03ca`, tag `pcf-v0.1-phase-2`. The Astrolabe/PCNG future research specification was committed separately at `a06fc27` (untagged, not implementation authority).
+
+## Phase 3 requirements
+- SPEC §41 Phase 3: raw capture, extraction, concept persistence, claim persistence, house classifier, fallback behavior. Acceptance: capture integration suite green.
+- The Phase 3 authorization covers the full SPEC §15 capture pipeline, including steps 12-14 (relation candidates, bounded relation inference, proposed relations).
+- Contracts: SPEC §13, §14, §15, §17, §18, §19 (ranking only), §28, §29, §30, §32.
+- Capture surface, assigned to Phase 3 by the reviewer on 2026-09-17: SPEC §26 `POST /api/capture`, the §25B CaptureBox and §25C ThoughtStream wiring, and UI acceptance test A3 (§33). The route returns after the synchronous pipeline finishes; no queues, workers, polling or status machines.
+
+## Phase 3 scope note
+SPEC §41 and `EXECUTION_PLAN.md` list relation candidate retrieval and bounded relation inference under Phase 4, while §15 includes them in the capture pipeline. The Phase 3 execution instruction explicitly authorized them, and the human reviewer accepted the result on 2026-09-17.
+
+Authorized phase-boundary resolution: Phase 3 owns the relation machinery required by the frozen capture pipeline: bounded candidate selection, the §19 relevance calculation needed to rank those candidates, and bounded proposed-relation inference. Phase 4 must reuse these primitives and owns MMR reranking, contextual constellation selection, deterministic constellation layout and visualization. Phase 4 must not independently reimplement the Phase 3 capture relation pipeline.
+
+This is an execution-boundary clarification. `SPEC.md` and `EXECUTION_PLAN.md` are unchanged.
+
+The capture API route (§26 `POST /api/capture`) and the Today capture interaction (A3) were also assigned to Phase 3 by the reviewer on 2026-09-17, as the thin integration surface over the capture engine.
+
+## Phase 3 pipeline as implemented (`lib/engine/capture.ts`)
+1. Validate: content must be a non-empty string after trimming; it is stored exactly as typed. Invalid input throws and writes nothing.
+2. One transaction: insert the object (type `thought`, provenance `user`, title null, importance and activation 0.5, status `active`), then append OBJECT_CAPTURED. This commits before any reasoner call.
+3. Extraction: one reasoner call. On success, one immediate transaction updates type, title and importance, upserts and attaches concepts, inserts claims, then appends OBJECT_EXTRACTED. It re-checks inside the transaction and writes nothing if an extraction was already committed.
+4. Houses: one reasoner call, using content, the extracted title and the concept names. On success, one immediate transaction writes all 12 rows and appends HOUSE_CLASSIFIED `{source: "model", dominantHouses, rationale}`. On invalid output, an outage or a write failure, it writes the §13 fallback in the same way with `{source: "fallback", reason}`. If even the fallback cannot be written, the status is `houses: "failed"` and the object has no house rows until a retry.
+5. Candidates (§17): the pool is objects sharing a concept, plus objects scoring >= 0.35 in a house where the new object also scores >= 0.35, plus the 2 most recent objects. The new object is excluded. The pool is ranked by §19 relevance, ties go to the newer object then the lower id, and the top 8 are kept. With no candidates, no reasoner call is made.
+6. Relation inference (§18): one reasoner call. The schema allows at most 3 proposals, restricts targets to the candidate ids and requires frozen relation types. Proposals below 0.55 are dropped, and duplicates of a (target, type) pair keep the most confident. A proposal is skipped if the same relation already exists, in either direction for the symmetric types `related_to`, `analogous_to` and `contradicts`. One immediate transaction inserts relations as `status: "proposed"`, `origin: "ai_inferred"`, each followed by RELATION_PROPOSED.
+7. The result is the stored object, house vector, concepts and relations, plus `enrichment: {extraction, houses, relations}`.
+8. Any unexpected error after the raw commit (for example the database failing to read back) is thrown as `CaptureAfterSaveError` with the stored object's id. Errors thrown before or during the raw commit are thrown unchanged, and nothing was written.
+- **Failure policy.** Each stage commits alone; there is no pipeline-wide transaction.
+  - After an invalid extraction, the later stages still run.
+  - After an unavailable, timed-out or unexpected reasoner error, later stages make no reasoner calls: houses get the fallback, and relations are `skipped`.
+  - The engine never retries a reasoner call. The adapter retries malformed output at most once, and each CLI invocation is capped at one model attempt.
+  - After the raw commit, enrichment failures are reported and never thrown.
+- **Retry (§28).** `retryIncompleteCapture` re-runs extraction when no OBJECT_EXTRACTED exists, then stores houses when the object has no house rows. Relations are not re-run. It returns `in_progress` while a capture or retry of the same object is running in this process.
+
+## Capture surface as implemented
+- **`POST /api/capture`** (`app/api/capture/route.ts`) is an adapter over `captureThought`. It has no prompts, no reasoner calls and no persistence of its own; the tests assert it runs the pipeline once per request.
+  1. Refuses with 403 `forbidden` unless the `Host` header is `localhost`, `127.0.0.1` or `[::1]` and any `Origin` header is a loopback page (`lib/utils/local-request.ts`). This blocks DNS-rebinding pages.
+  2. Refuses with 415 `unsupported_media_type` unless the body is `application/json`. A cross-site page must then send a CORS preflight, which the route never grants.
+  3. Refuses with 400 `invalid_request` for malformed JSON, a body that is not an object, or content that is not a non-empty string (the engine's validation). Nothing is stored.
+  4. Calls `captureThought` with the app database and a fresh `ClaudeSubscriptionReasoner`, and waits for the whole pipeline.
+  5. Returns 200 with the engine's `CaptureResult`: the four §26 fields `object`, `houseVector`, `concepts`, `relations`, plus `enrichment`. Partial enrichment (extraction failed, fallback houses, relation failure, Claude unavailable) is still 200.
+  6. Returns 500 `capture_saved_incomplete` with `saved: true` and `objectId` for `CaptureAfterSaveError`: the thought is stored.
+  7. Returns 500 `capture_not_saved` with `saved: false` for any other error (raw commit failed or the database could not be opened): nothing is stored.
+  - Every error body is `{error, message, saved, objectId?}`. Failures are logged as one JSON line with operation, outcome, error name and object id, never content.
+  - If the client disconnects, the handler keeps running: the raw thought stays stored and enrichment completes.
+- **Response timing.** The response is sent once the pipeline finishes: typically 2 or 3 CLI calls. The worst case is bounded by the adapter: 6 CLI invocations at 120 s each plus kill grace, about 12.5 minutes, longer if other captures are queued ahead in the process-wide reasoner queue. The raw thought is stored before the first call.
+- **Today page.** `TodayView` is a server component. It calls `connection()`, refuses non-loopback requests with a 404, and reads today's objects (local calendar day, newest first) with each object's dominant house from SQLite on every request.
+- **ThoughtCard** shows time, title (when extracted), a content preview (CSS line clamp) and the dominant house as "n · Name" (§21 tie rule: lowest house). Operator buttons arrive in Phase 5.
+- **CaptureBox** (client):
+  - Cmd+Enter, Ctrl+Enter or the Capture button submits. Blank input is not sent. Auto-repeated keydowns are ignored.
+  - While a request runs: the field is read-only and keeps its text, the button is disabled, further submits are ignored, and the status line reads "Capturing…".
+  - The result is rendered (`flushSync`) before the in-flight guard is released, so a keypress queued behind the response sees the cleared field. Without this, the production build sent a second capture.
+  - On a confirmed save (200, or 500 with `saved: true`): the field clears, the status summarises any enrichment gaps, and `router.refresh()` re-renders Today.
+  - On `capture_not_saved`, `invalid_request`, `unsupported_media_type` or `forbidden`: the text stays and the status says nothing was saved.
+  - On a network error or an unrecognised response: the text stays, the status says the capture could not be confirmed, and the page is not refreshed. A refresh that cannot reach the server makes Next 16 reload the page, which would discard the text.
+  - Focus returns to the field (without scrolling) only if it was in the capture form or had fallen back to the page.
+- **Status copy.** SPEC defines no capture copy.
+  - Full success: "Captured."
+  - Partial success: "Captured." followed by one sentence per gap: title and concepts not extracted; neutral default houses used; houses not classified; related thoughts not suggested.
+- **Serving.** `npm run dev` and `npm run start` listen on 127.0.0.1 only (`-H 127.0.0.1`), so other machines on the network cannot reach the store or the subscription.
+
+## Reasoner calls per capture
+One call is one `Reasoner.runStructured`. With the real adapter, each call is at most 2 CLI invocations of one model attempt each. The capture route adds no calls: one request runs the pipeline once.
+
+| Scenario | Calls | Max CLI invocations |
+|---|---|---|
+| Success, no candidates (for example the first capture) | extract, classify-houses = 2 | 4 |
+| Success with candidates | extract, classify-houses, infer-relations = 3 | 6 |
+| Extraction invalid | 3 (2 without candidates) | 6 |
+| Extraction unavailable, timeout or unexpected error | extract = 1; fallback houses; relations skipped | 2 |
+| Classification invalid | 3 (2 without candidates); fallback houses | 6 |
+| Classification unavailable or timeout | 2; fallback houses; relations skipped | 4 |
+| Relation inference invalid, unavailable or timeout | 3; no relations | 6 |
+| Reasoner down for everything | 1 | 2 |
+| House write failure | 2 or 3; houses `failed` | 6 |
+| `retryIncompleteCapture` | 0 to 2 (extraction if incomplete, classification if no house rows and the reasoner is up); 0 when `in_progress` | 4 |
+
+## Phase 3 delivered
+- **Created, capture engine:**
+  - `lib/engine/capture.ts`, `extract.ts`, `house-classifier.ts`, `relation-inference.ts` and `relevance.ts`
+  - `lib/ai/prompts/extract.ts`, `classify-houses.ts` and `infer-relations.ts`
+  - `lib/utils/math.ts`
+- **Created, capture surface:**
+  - `app/api/capture/route.ts`
+  - `components/today/ThoughtStream.tsx` and `ThoughtCard.tsx`
+  - `lib/utils/local-request.ts`
+- **Created, tests:**
+  - `tests/fixtures/capture-fixtures.ts` and `no-real-claude.setup.ts`
+  - `tests/fixtures/e2e-server.mjs` and `tests/fixtures/e2e-bin/claude` (the fake CLI for acceptance tests)
+  - `tests/unit/capture-contracts.test.ts`, `relevance.test.ts`, `no-real-claude.test.ts` and `local-request.test.ts`
+  - `tests/integration/capture.test.ts`, `relation-candidates.test.ts`, `capture-route.test.ts` and `today-stream.test.ts`
+  - `tests/acceptance/capture.spec.ts`
+- **Modified, application:**
+  - `components/today/CaptureBox.tsx`: wired to the route.
+  - `components/today/TodayView.tsx`: reads today's objects.
+  - `components/constellation/ConstellationPane.tsx`: the aria-label no longer claims nothing was captured today.
+  - `app/globals.css`
+- **Modified, library.** Each change only adds lines:
+  - `lib/db/database.ts`: `getAppDatabase`.
+  - `lib/db/repositories/concepts.ts`: `listObjectIdsSharingConcepts`.
+  - `lib/db/repositories/objects.ts`: `listObjectIdsWithHouseScoreAtLeast`, `listRecentObjectIds` and `listObjectsCreatedBetween`.
+  - `lib/domain/houses.ts`: `dominantHouse`.
+  - `lib/utils/time.ts`: `localDayBounds`.
+- **Modified, tooling and tests:**
+  - `package.json`: scripts only; `dev` and `start` bind to 127.0.0.1.
+  - `playwright.config.ts`: production and dev projects, each with its own server.
+  - `vitest.config.mts`: setup file.
+  - `tests/acceptance/today.spec.ts`: A3.
+- **Modified, docs:** `BUILD_STATUS.md`, `OPEN_QUESTIONS.md` and `README.md` (loopback serving, the acceptance harness).
+
+## Phase 3 acceptance gates (2026-09-17, final code)
+| Gate | Result |
+|------|--------|
+| `npm test` | PASS: 18 files, 231 tests, with a guard that blocks any real `claude` process |
+| `npx tsc --noEmit` | PASS |
+| `npm run build` | PASS: Next.js 16.3.5; `/` and `/api/capture` are rendered per request |
+| `npm run test:e2e` | PASS: A1, A2 and A3 plus 13 capture tests, against both the production build and the dev server (31 passed; 1 production-only test skipped on dev). Every capture goes through the real route, engine and adapter; only the `claude` executable is a local fake. |
+| Production smoke (`next start`, fake CLI) | PASS: capture returns the full result, JSON-only rule enforced, the thought renders on `/` |
+| SPEC §32 capture, persistence and relation tests | PASS (`tests/integration/capture.test.ts`) |
+| SPEC §34 static check | PASS; the API-key name appears only in the adapter's removal list |
+| Mutation checks | Engine: all 41 injected regressions fail the suite. Capture surface: 18 of 19 fail it. The survivor removes `preventScroll` from the refocus, which no test covers. |
+| Future-research terms in new code | none |
+| `SPEC.md`, `CLAUDE.md`, `EXECUTION_PLAN.md`, migrations, schema, Phase 2 adapter files, `package-lock.json` | unchanged versus `pcf-v0.1-phase-2` |
+| Research specification | unchanged since `a06fc27` |
+
+## Phase 3 dependencies added
+- none. `package.json` changed only in the `dev` and `start` scripts.
+
+## Phase 3 interpretation decisions (non-blocking)
+- **Metadata incomplete (§28).** An object is incomplete when it has no OBJECT_EXTRACTED event. There is no column for it.
+- **Extraction fields.**
+  - `unresolved` has no column. It is recorded in the OBJECT_EXTRACTED payload, and the object status stays `active`.
+  - Extracted claims have `validFrom` and `validTo` null.
+  - `lastActivatedAt` stays null at capture, and `activation` keeps the schema default 0.5.
+- **Type priority.** The §14 type priority is encoded in the extraction prompt in its frozen order. It is not overridden in code.
+- **Significant house overlap (§17.2).** Some house where both objects score >= 0.35, the §13 dominant-house threshold.
+- **Recent objects (§17.3).** "Include up to two recent objects" adds them to the pool before ranking, so eight more relevant candidates can outrank them.
+- **§19 details.**
+  - G: a direct non-rejected relation takes precedence over a two-hop path, and the best direct relation counts.
+  - F: uses feedback with `target_type` `"object"`, and `acted_on` has no §19 value so it is skipped.
+  - T: uses creation timestamps only.
+- **Content sent to the reasoner.** Candidate content is cut to 600 characters. The source thought is sent in full. System prompts are fixed text, and user content goes only in the prompt body.
+- **Relation duplicates.** Rejected relations also count as existing, so a declined link is not proposed again.
+- **Logging (§13 error log, §29).** Failures, fallbacks and skips are logged as one JSON line to stderr by default, with operation, object id, outcome, error kind and duration, and never content.
+- **Test guard.** Tests block any process named `claude`, whether by name, by path, or as the first word of a shell command. The guard's own tests would fail with "not found" rather than reach a real CLI if the guard were missing.
+- **Capture response (§26).** The route returns the engine's `CaptureResult`: the four §26 fields plus `enrichment`, which reports §28 "metadata incomplete" and the fallback. `houseVector` is null only when not even the fallback could be stored.
+- **Response timing.** The route returns after the whole pipeline, as instructed. §25B's "clears only after raw content is safely persisted" holds because the field clears only after that response.
+- **Capture button.** §25B names only the keyboard shortcut. A text-labelled Capture button was added for pointer users (§37 "buttons with text labels"). It is the same submit path.
+- **Local-only serving.** §5 and §27 make PCF local and single-user. The app therefore listens on 127.0.0.1 and answers only loopback host names, and the capture route requires JSON. Phase 4-6 routes must apply `isLoopbackRequest` too.
+- **Migrations on first use.** `getAppDatabase` applies pending migrations when the app first opens the database, using the existing runner. `npm run migrate` still works.
+- **Today.** "Today" is the server's local calendar day; for this local app, that is the user's.
+- **No retry control.** §28 "allow retry" exists in the engine (`retryIncompleteCapture`). No UI or route triggers it, since §26 defines none; see `OPEN_QUESTIONS.md`.
+- **Acceptance harness.** `tests/fixtures/e2e-server.mjs` puts a fake `claude` first on PATH and refuses to start unless `claude` resolves to it. It also refuses on Windows, where the fake cannot be resolved. The fake refuses to run without `PCF_E2E_FAKE_CLAUDE=1`. Failure markers inside the captured text select extraction, house, relation or outage failures.
+- **One production-only test.** The late-keypress test is skipped on the dev server, because React development builds render the cleared field before any other task can run.
+
+## Phase 3 review
+- **Five-lens review.** It covered data integrity, reasoner boundary, SPEC conformance, relations and test strength, with three skeptics per finding: 24 findings, 18 survived, all fixed.
+  - Overlapping retries, or a retry during a running capture, could commit an extraction twice. Now an in-flight guard and in-transaction re-checks prevent it.
+  - A failed fallback house write, or a candidate-selection database error, escaped `captureThought` after the raw commit. Both are now reported as `houses: "failed"` and `relations: "failed"`.
+  - Objects left without house rows could never be repaired. Retry now fills them in.
+  - The existing-relation check could never fire. It now covers the reverse direction for symmetric types.
+  - The no-real-Claude guard test was not fail-safe and missed shell strings. Both are fixed.
+  - Ranking components, outage call counts, partial-commit atomicity, the relation prompt boundary and the payload fields are now each pinned by tests.
+- **Rejected by the skeptics (6).**
+  - Blank claim fields stored verbatim.
+  - Missing BUILD_STATUS decisions (written now).
+  - Fallback vectors counting as house overlap.
+  - Candidate-pool cost at 10k objects.
+  - Direct-relation precedence over two-hop.
+  - Further guard bypasses through env, fork or require.
+
+## Capture surface review (2026-09-17)
+- **Lenses.** Four: durability and error semantics, client behaviour, concurrency and security, test strength. Three skeptics checked each finding. Of 14 findings, 9 survived and all are fixed:
+  1. **Refresh after an unconfirmed capture.** When the server could not be reached, `router.refresh()` made Next reload the page and discard the text the UI said was kept. Refresh now happens only after a confirmed save.
+  2. **Guard released too early.** The in-flight guard was released before the cleared field rendered, so in the production build a keypress queued behind the response sent the thought again (reproduced: 2 POSTs). The result is now rendered first, and auto-repeat is ignored.
+  3. **Refocus.** Focus returned to the field unconditionally and scrolled the page. It now returns only from the capture form, without scrolling.
+  4. **LAN exposure.** `next dev` and `next start` listened on every interface, so LAN peers could capture, spend the subscription and read Today. Both now bind to 127.0.0.1.
+  5. **DNS rebinding.** A rebinding page could capture and read Today. The route and the Today page now require a loopback host and origin.
+  6. **Windows harness.** On Windows the harness PATH check would pass while the app started the real `claude.exe`. The harness now refuses to run on Windows.
+  7. **Duplicate after a post-save failure.** The route test missed a retry that stored the thought twice. It now counts objects, events and pipeline runs.
+  8. **Text kept during the request.** No test checked that the text stays until the save is confirmed. One does now.
+  9. **Cmd and Ctrl.** Only one modifier was tested per platform. Both are now tested.
+- **Rejected by the skeptics (5).**
+  - SQLite `synchronous=NORMAL` durability on power loss: pre-existing and not required by SPEC.
+  - No reachable retry control, raised twice: SPEC defines no surface for it (recorded as an open question).
+  - Long-open requests: the approved v0.1 design.
+  - Acceptance tests only against `next dev`: no current defect, though production is now tested too.
+- **Found while verifying the fixes.** The late-keypress race exists only in production builds, so the acceptance suite now runs against both builds. Ordering of the Today list had no test; `today-stream.test.ts` now covers it.
+
+## Deviations from SPEC.md
+- None in behaviour.
+- `lib/utils/local-request.ts` is one additive file that is not in the §7 tree. It holds the loopback check shared by the capture route and the Today page.
+- Relation steps 12-14 and §19 were built in Phase 3 under the authorized phase-boundary resolution above.
+
+## Blockers
+- none. See `OPEN_QUESTIONS.md` for the non-blocking retry-surface question.
+
+## Next action
+Phase 3 is checkpointed. Wait for explicit approval before Phase 4 (MMR reranking, contextual constellation selection, deterministic layout and the SVG). Phase 4 must reuse the Phase 3 relevance, candidate and relation primitives, and its routes must apply the loopback check.
 
 ## Phase 2 requirements (SPEC.md §16, §29, §30, §34, §41)
 Reasoner interface, ClaudeSubscriptionReasoner, MockReasoner, preflight script, structured-output validator. No Anthropic SDK, no API key. Acceptance: mock tests green; manual preflight documented.
@@ -119,14 +315,11 @@ Sources: `claude --help`, and the official docs pages cli-reference, headless an
   - the private working directory and each of its checks (mode, symlink, owner, no-uid platforms, fallback, reuse, cached re-check);
   - working-directory error mapping, issue bounds, the single PCF retry (removed, or a third invocation allowed), serialization, prompt-in-argv, stdout/stderr separation.
 
-## Deviations from SPEC.md
+## Phase 2 deviations from SPEC.md
 - none.
 
-## Blockers
+## Phase 2 blockers
 - none
-
-## Next action
-Phase 2 is approved and checkpointed. The next phase in `EXECUTION_PLAN.md` is Phase 3, capture intelligence: raw capture first, extraction, concept persistence, claims, house classifier, and fallback behavior (SPEC §41; acceptance: capture integration suite green). It has not started and requires explicit authorization.
 
 ## Phase 1 requirements (SPEC.md §41)
 domain types, Zod schemas, migration (`001_initial.sql`), repositories, event writes, seed script. No AI.
@@ -218,7 +411,7 @@ Not added yet (later phases): `zod` (Phase 1), `@anthropic-ai/sdk` (never).
 | 0 — Scaffold | approved, tag `pcf-v0.1-phase-0` | npm test PASS, npm run build PASS |
 | 1 — Domain + persistence | approved, tag `pcf-v0.1-phase-1` | npm test PASS (27), npm run build PASS |
 | 2 — Claude subscription adapter | approved, tag `pcf-v0.1-phase-2` | npm test PASS (87), npm run build PASS, e2e PASS, preflight PASS 5/5 |
-| 3 — Capture intelligence | not started | — |
+| 3 — Capture intelligence | approved, tag `pcf-v0.1-phase-3` | npm test PASS (231), build PASS, e2e PASS (A1-A3 + 13 capture tests, production and dev) |
 | 4 — Relevance + constellation | not started | — |
 | 5 — Four operators | not started | — |
 | 6 — Cognitive return | not started | — |

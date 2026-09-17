@@ -17,14 +17,20 @@ PCF never asks for, stores, or reads an Anthropic API key. AI reasoning runs thr
 
 ```bash
 npm install
-npm run migrate    # apply SQLite migrations to ./data/pcf.db
+npm run migrate    # apply SQLite migrations to ./data/pcf.db (the app also applies them on first use)
 npm run seed       # optional: load the synthetic demo dataset
 npm run preflight  # manual check that Claude Code and the database are ready
 npm run dev        # open Today at http://localhost:3000
 npm test           # unit/integration tests (mock reasoner and fake CLI only)
-npm run test:e2e   # UI acceptance tests (Playwright, port 3210)
+npm run test:e2e   # UI acceptance tests (Playwright; production build on port 3211, dev server on 3210)
 npm run build
 ```
+
+`npm run dev` and `npm run start` listen on 127.0.0.1 only, and the app answers only requests addressed to `localhost`, `127.0.0.1` or `[::1]`. Other machines on your network cannot reach your thoughts or start Claude calls.
+
+A capture is stored before any AI work starts. The request then waits for extraction, house classification and relation inference, which can take a while; if any of those fail, the thought is still shown in Today.
+
+The acceptance tests start their own servers with a temporary database and a fake `claude` CLI placed first on `PATH`; they never call Claude. They run on macOS and Linux only.
 
 ## Manual preflight
 

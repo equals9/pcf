@@ -6,3 +6,10 @@ export function nowIso(): string {
 export function daysAgoIso(days: number, from: Date = new Date()): string {
   return new Date(from.getTime() - days * 86_400_000).toISOString();
 }
+
+/** Start (inclusive) and end (exclusive) of the local calendar day containing `at`, as ISO timestamps. */
+export function localDayBounds(at: Date = new Date()): { start: string; end: string } {
+  const start = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+  const end = new Date(at.getFullYear(), at.getMonth(), at.getDate() + 1);
+  return { start: start.toISOString(), end: end.toISOString() };
+}

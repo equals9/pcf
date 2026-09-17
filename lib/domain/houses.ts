@@ -30,3 +30,10 @@ export function houseVector(value = 0): HouseVector {
   for (const n of HOUSE_NUMBERS) v[n] = value;
   return v;
 }
+
+/** The highest-scoring house; ties go to the lowest house number (SPEC §21). */
+export function dominantHouse(vector: HouseVector): HouseNumber {
+  let best: HouseNumber = HOUSE_NUMBERS[0];
+  for (const n of HOUSE_NUMBERS) if (vector[n] > vector[best]) best = n;
+  return best;
+}

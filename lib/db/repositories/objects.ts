@@ -90,3 +90,38 @@ export function getHouseScores(db: PcfDatabase, objectId: string): HouseVector |
   for (const r of rows) v[r.house] = r.score;
   return houseVectorSchema.parse(v);
 }
+
+/** Ids of other objects scoring at least `minScore` in any of the given houses, in id order. */
+export function listObjectIdsWithHouseScoreAtLeast(
+  db: PcfDatabase,
+  houses: readonly HouseNumber[],
+  minScore: number,
+  excludeId: string,
+): string[] {
+  if (houses.length === 0) return [];
+  const placeholders = houses.map(() => "?").join(", ");
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT object_id AS id FROM house_scores
+       WHERE house IN (${placeholders}) AND score >= ? AND object_id <> ?
+       ORDER BY object_id`,
+    )
+    .all(...houses, minScore, excludeId) as { id: string }[];
+  return rows.map((r) => r.id);
+}
+
+/** Ids of the most recently created other objects, newest first. */
+export function listRecentObjectIds(db: PcfDatabase, limit: number, excludeId: string): string[] {
+  const rows = db
+    .prepare("SELECT id FROM objects WHERE id <> ? ORDER BY created_at DESC, id DESC LIMIT ?")
+    .all(excludeId, limit) as { id: string }[];
+  return rows.map((r) => r.id);
+}
+
+/** Objects created in [fromIso, toIso), newest first. */
+export function listObjectsCreatedBetween(db: PcfDatabase, fromIso: string, toIso: string): CognitiveObject[] {
+  const rows = db
+    .prepare("SELECT * FROM objects WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC, id DESC")
+    .all(fromIso, toIso) as ObjectRow[];
+  return rows.map(rowToObject);
+}

@@ -18,7 +18,7 @@ export function ConstellationPane() {
         className="constellation__svg"
         viewBox="0 0 400 400"
         role="img"
-        aria-label="Empty constellation. No thoughts captured today."
+        aria-label="Empty constellation."
       >
         <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--border)" />
         <circle cx={cx} cy={cy} r={r / 2} fill="none" stroke="var(--border)" strokeDasharray="2 4" />

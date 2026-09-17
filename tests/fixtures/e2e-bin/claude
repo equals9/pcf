@@ -1,0 +1,79 @@
+#!/usr/bin/env node
+// Fake `claude` CLI for the Playwright acceptance server only (tests/fixtures/e2e-server.mjs puts this
+// directory first on PATH). It never contacts any service. It answers the capture pipeline's structured
+// requests with schema-valid output, chosen from the shape of --json-schema. Markers in the captured
+// thought itself select failures:
+//   pcf-e2e-extract-invalid    extraction output fails validation (both attempts)
+//   pcf-e2e-houses-invalid     house classification output fails validation (both attempts)
+//   pcf-e2e-relations-invalid  relation inference output fails validation (both attempts)
+//   pcf-e2e-unavailable        every structured call reports a provider error
+//   pcf-e2e-slow               every structured call waits 1.5 s first
+import { readFileSync } from "node:fs";
+
+const args = process.argv.slice(2);
+
+if (process.env.PCF_E2E_FAKE_CLAUDE !== "1") {
+  process.stderr.write("fake claude: refusing to run outside the PCF e2e server\n");
+  process.exit(2);
+}
+
+if (args[0] === "--version") {
+  process.stdout.write("0.0.0 (PCF e2e fake Claude Code)\n");
+  process.exit(0);
+}
+
+const schemaIndex = args.indexOf("--json-schema");
+const schema = schemaIndex >= 0 ? JSON.parse(args[schemaIndex + 1]) : {};
+const keys = Object.keys(schema.properties ?? {});
+const task = keys.includes("scores") ? "classify" : keys.includes("proposals") ? "relations" : keys.includes("concepts") ? "extract" : "unknown";
+
+const stdin = readFileSync(0, "utf8");
+const afterFirstLine = (text) => JSON.parse(text.slice(text.indexOf("\n") + 1).split("\n\nYour previous response")[0]);
+const input = task === "unknown" ? null : afterFirstLine(stdin);
+// Only the thought being captured selects behaviour, never candidate text.
+const content = task === "extract" ? input : task === "classify" ? input.content : task === "relations" ? input.source.content : "";
+
+const envelope = (payload) =>
+  JSON.stringify({ type: "result", subtype: "success", is_error: false, result: JSON.stringify(payload), structured_output: payload });
+
+function respond() {
+  if (content.includes("pcf-e2e-unavailable")) {
+    process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: true, result: "fake provider outage" }));
+    process.exit(1);
+  }
+  const invalid = { invalid: true };
+  switch (task) {
+    case "extract": {
+      if (content.includes("pcf-e2e-extract-invalid")) return envelope(invalid);
+      const words = content.trim().split(/\s+/).slice(0, 4).join(" ");
+      return envelope({
+        type: "idea",
+        title: `Extracted: ${words}`.slice(0, 80),
+        concepts: [{ name: "e2e capture" }],
+        claims: [],
+        unresolved: false,
+        importanceEstimate: 0.6,
+      });
+    }
+    case "classify": {
+      if (content.includes("pcf-e2e-houses-invalid")) return envelope(invalid);
+      const scores = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [String(i + 1), 0.1]));
+      scores["5"] = 0.8;
+      scores["9"] = 0.4;
+      return envelope({ scores, dominantHouses: [5], rationale: "Fake classification." });
+    }
+    case "relations": {
+      if (content.includes("pcf-e2e-relations-invalid")) return envelope(invalid);
+      const target = input.candidates[0];
+      return envelope({ proposals: target ? [{ targetId: target.id, type: "related_to", confidence: 0.8, rationale: "Fake relation." }] : [] });
+    }
+    default:
+      return envelope(invalid);
+  }
+}
+
+const delay = content.includes("pcf-e2e-slow") ? 1500 : 0;
+setTimeout(() => {
+  process.stdout.write(respond());
+  process.exit(0);
+}, delay);

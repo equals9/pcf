@@ -45,3 +45,16 @@ export function listConceptsForObject(db: PcfDatabase, objectId: string): Concep
     .all(objectId) as ConceptRow[];
   return rows.map(rowToConcept);
 }
+
+/** Ids of other objects sharing at least one concept with the object (SPEC §17 step 1), in id order. */
+export function listObjectIdsSharingConcepts(db: PcfDatabase, objectId: string): string[] {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT other.object_id AS id FROM object_concepts mine
+       JOIN object_concepts other ON other.concept_id = mine.concept_id
+       WHERE mine.object_id = ? AND other.object_id <> ?
+       ORDER BY other.object_id`,
+    )
+    .all(objectId, objectId) as { id: string }[];
+  return rows.map((r) => r.id);
+}
