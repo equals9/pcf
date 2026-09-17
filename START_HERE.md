@@ -54,6 +54,11 @@ Candidate roadmap after the cognitive loop has been validated.
 
 **Context only.**
 
+### `research/ASTROLABE_PCNG_RESEARCH_SPEC.md`
+Future research specification for the Astrolabe and the Personal Cognitive Neural Graph.
+
+**Future research only.** It does not authorize implementation or modify `SPEC.md`.
+
 ---
 
 ## `prompts/`
