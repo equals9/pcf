@@ -110,6 +110,31 @@ export function listObjectIdsWithHouseScoreAtLeast(
   return rows.map((r) => r.id);
 }
 
+/**
+ * Like `listObjectIdsWithHouseScoreAtLeast`, but only the `limit` most recently created matches.
+ * Bounds the work a single projection has to do on a large store (SPEC §38).
+ */
+export function listRecentObjectIdsWithHouseScoreAtLeast(
+  db: PcfDatabase,
+  houses: readonly HouseNumber[],
+  minScore: number,
+  excludeId: string,
+  limit: number,
+): string[] {
+  if (houses.length === 0 || limit <= 0) return [];
+  const placeholders = houses.map(() => "?").join(", ");
+  const rows = db
+    .prepare(
+      `SELECT o.id AS id FROM objects o
+       WHERE o.id <> ? AND EXISTS (
+         SELECT 1 FROM house_scores h WHERE h.object_id = o.id AND h.house IN (${placeholders}) AND h.score >= ?
+       )
+       ORDER BY o.created_at DESC, o.id DESC LIMIT ?`,
+    )
+    .all(excludeId, ...houses, minScore, limit) as { id: string }[];
+  return rows.map((r) => r.id);
+}
+
 /** Ids of the most recently created other objects, newest first. */
 export function listRecentObjectIds(db: PcfDatabase, limit: number, excludeId: string): string[] {
   const rows = db

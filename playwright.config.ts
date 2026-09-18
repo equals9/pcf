@@ -16,6 +16,9 @@ const server = (mode: "production" | "dev", port: number, timeout: number) => ({
 
 export default defineConfig({
   testDir: "tests/acceptance",
+  // The dev server compiles routes on demand, so first visits can be slow while both servers are warming.
+  timeout: 60_000,
+  expect: { timeout: 10_000 },
   // One worker: the tests in a project share one server and one database, and some count stored thoughts.
   workers: 1,
   projects: [

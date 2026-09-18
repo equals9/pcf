@@ -155,7 +155,7 @@ body {
 }
 
 .thought__preview {
-  margin: 0;
+  display: block;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   display: -webkit-box;
@@ -211,6 +211,102 @@ body {
   width: 100%;
   max-width: 420px;
   height: auto;
+}
+
+.constellation__ring {
+  fill: none;
+  stroke: var(--border);
+}
+
+.constellation__ring--inner {
+  stroke-dasharray: 2 4;
+}
+
+.constellation__spoke {
+  stroke: var(--border);
+  stroke-opacity: 0.5;
+}
+
+.constellation__edge {
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+
+.constellation__anchor {
+  fill: var(--accent);
+}
+
+.constellation__anchor--empty {
+  fill: var(--muted);
+}
+
+.constellation__node circle {
+  fill: var(--bg);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.constellation__node:hover circle {
+  fill: var(--accent);
+}
+
+.constellation__node:focus-visible circle {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.constellation__anchor-label {
+  max-width: 420px;
+  margin: 16px 0 0;
+  font-family: var(--font);
+  font-size: 15px;
+  text-align: center;
+}
+
+.constellation__list {
+  width: 100%;
+  max-width: 420px;
+  margin: 16px 0 0;
+  padding: 0 0 0 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.constellation__list li {
+  margin-bottom: 4px;
+}
+
+.constellation__list a {
+  color: inherit;
+}
+
+.constellation__list-house {
+  white-space: nowrap;
+}
+
+.thought--selected {
+  border-left: 2px solid var(--accent);
+  margin-left: -14px;
+  padding-left: 12px;
+}
+
+.thought__selected {
+  color: var(--accent);
+}
+
+.thought__link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.thought__link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.thought__link:hover .thought__title {
+  text-decoration: underline;
 }
 
 @media (max-width: 900px) {

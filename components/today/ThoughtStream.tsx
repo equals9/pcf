@@ -7,7 +7,15 @@ export interface StreamItem {
 }
 
 /** Today's objects only, newest first (SPEC.md §25C). */
-export function ThoughtStream({ items }: { items: StreamItem[] }) {
+export function ThoughtStream({
+  items,
+  selectedId,
+  hrefFor,
+}: {
+  items: StreamItem[];
+  selectedId: string | null;
+  hrefFor: (id: string) => string;
+}) {
   return (
     <section className="stream" aria-labelledby="stream-heading">
       <h2 id="stream-heading" className="stream__heading">
@@ -19,7 +27,7 @@ export function ThoughtStream({ items }: { items: StreamItem[] }) {
         <ol className="stream__list" aria-labelledby="stream-heading">
           {items.map(({ object, dominantHouse }) => (
             <li key={object.id}>
-              <ThoughtCard object={object} dominantHouse={dominantHouse} />
+              <ThoughtCard object={object} dominantHouse={dominantHouse} href={hrefFor(object.id)} selected={object.id === selectedId} />
             </li>
           ))}
         </ol>

@@ -1,8 +1,72 @@
 # PCF Build Status
 
 ## Current phase
-Phase 3 — Capture intelligence: COMPLETE and approved, including the capture route and Today capture UI. Checkpointed with tag `pcf-v0.1-phase-3`. Phase 4 not started.
-Phase 2 approved and checkpointed at commit `dff03ca`, tag `pcf-v0.1-phase-2`. The Astrolabe/PCNG future research specification was committed separately at `a06fc27` (untagged, not implementation authority).
+Phase 4 — Relevance + constellation: COMPLETE and approved. Checkpointed with tag `pcf-v0.1-phase-4`. Phase 5 not started.
+Phase 3 approved and checkpointed at commit `adebe18`, tag `pcf-v0.1-phase-3`.
+
+## Phase 4 requirements
+- SPEC §41 Phase 4: relevance score, MMR, relation candidates, relation inference, deterministic constellation geometry, SVG visualization. Acceptance: constellation tests green.
+- Relevance (§19), §17 candidate retrieval and §18 relation inference were built in Phase 3 under the recorded phase-boundary resolution, and are reused here, not reimplemented.
+- Contracts: SPEC §9 (frozen node and edge types), §20, §21, §25C, §25G, §26 (`GET /api/object/:id/constellation`), §31 (MMR and layout determinism), §33 A5 and A6, §37, §38.
+
+## Phase 4 as implemented
+- **Projection (`lib/engine/constellation.ts`).** `buildConstellation(db, anchorId)` returns the anchor, at most 12 nodes and the edges between them, or null for an unknown anchor.
+  1. **Candidates.** Objects sharing a concept with the anchor, objects scoring >= 0.35 in a house where the anchor also scores >= 0.35, the 2 most recent objects, and every object the anchor is directly related to. Excluded: the anchor, archived objects, objects with no house vector yet, and objects whose only link is a rejected relation. Each unbounded arm is capped at the 96 most recent matches so one projection cannot scan the whole store (§38).
+  2. **Ranking.** §19 relevance, reusing the Phase 3 functions.
+  3. **§20 MMR.** `0.78 * relevance - 0.22 * maxSimilarity(selected)`, redundancy = `0.60 * concept similarity + 0.40 * house cosine`, until 12 nodes or the candidates run out. Ties: higher relevance, then the newer object, then the lower id, so the result does not depend on input order.
+  4. **§21 geometry.** Dominant house (ties to the lowest house), sector centre `-90° + (n - 1) * 30°`, `radius = 90 + (1 - R) * 110`, node radius `8 + activation * 8`, and angular jitter within ±10°: the nodes that share a sector are spread evenly across the band in a stable id-hash order. Coordinates are absolute in a 432 x 432 drawing space whose centre is the anchor.
+  5. **Edges.** Only persisted, non-rejected relations between visible objects, once each, with the stored type and confidence. Never similarity, never proximity.
+- **`GET /api/object/:id/constellation`** (§26): loopback-only, adapter over the engine, 404 for an unknown object, 500 with a content-free log on a database failure. It ranks nothing itself.
+- **Today (§25G).** The selected object lives in the URL (`/?focus=<id>`), so the page is server-rendered, shareable and needs no client state. The anchor is the selected object, else the latest object today, else an empty scaffold with no fake nodes. Thought cards, dial nodes and the text list all link to focus, so selection is a normal navigation.
+- **Accessibility (§37).** Every node is a keyboard-reachable link with an aria-label naming the thought and its house, and the same nodes are repeated as a text list under the dial, so the graph is readable without the picture.
+
+## Phase 4 acceptance gates (2026-09-17)
+| Gate | Result |
+|------|--------|
+| `npm test` | PASS: 21 files, 267 tests |
+| `npx tsc --noEmit` | PASS |
+| `npm run build` | PASS; `/`, `/api/capture` and `/api/object/[id]/constellation` render per request |
+| `npm run test:e2e` | PASS: A1, A2, A3, A5, A6 and the capture tests, against the production build and the dev server (37 passed, 1 production-only test skipped on dev), run twice with the same result |
+| SPEC §31 MMR test | PASS: three near-duplicates do not take the top slots from a comparably relevant diverse candidate |
+| SPEC §31 layout determinism | PASS: repeated builds give identical coordinates; pinned values guard the formulas |
+| Mutation checks | 18 of 18 injected regressions fail the suite (weights, cap, jitter, hash, sector angle, radius, node size, unclassified objects, pool bound, archived, rejected relations, edge visibility, anchor resolution, list navigation, route checks) |
+| Future-research terms in new code | none |
+| `SPEC.md`, `CLAUDE.md`, migrations, schema, Phase 2 adapter files, dependencies | unchanged |
+
+## Phase 4 delivered
+- **Created:** `lib/engine/constellation.ts`; `app/api/object/[id]/constellation/route.ts`; `components/constellation/ConstellationGraph.tsx`, `ConstellationNode.tsx`, `ConstellationEdge.tsx`; `tests/unit/constellation.test.ts`; `tests/integration/constellation.test.ts`; `tests/integration/constellation-route.test.ts`.
+- **Modified:** `components/constellation/ConstellationPane.tsx` (graph or scaffold), `components/today/TodayView.tsx` (anchor resolution), `ThoughtStream.tsx` and `ThoughtCard.tsx` (selection links, selected state), `app/page.tsx` (focus search param), `app/globals.css`; `lib/db/repositories/objects.ts` and `concepts.ts` (bounded pool queries, additive); `tests/fixtures/e2e-server.mjs` (seeds the temporary database); `playwright.config.ts` (timeouts); `tests/acceptance/today.spec.ts` (A5, A6, draft-preservation).
+- **Dependencies added:** none.
+
+## Phase 4 interpretation decisions (non-blocking)
+- **Constellation candidates.** SPEC does not define the pool for §21, only for §17. Phase 4 reuses the §17 pool and adds the anchor's directly related objects, since a linked thought should be able to appear in its own projection. Each unbounded arm keeps the 96 most recent matches (8 per node slot), which is deterministic and bounds the work.
+- **Unclassified objects.** §21 places a candidate in "its highest-scoring house". An object still waiting for classification has none, so it stays out of the dial instead of being drawn under a house it was never given. It still appears in the Today stream.
+- **Angular jitter.** §21 asks for deterministic distribution within the sector using stable id hashing, capped at ±10°. Nodes that share a sector are therefore spread evenly across the band in id-hash order, rather than each taking an independent hash offset, which left them on top of each other.
+- **Drawing space.** §21 fixes the formulas but not the canvas. Coordinates are absolute in a 432 x 432 box (centre 216 = 90 + 110 + 16), so the widest node still fits.
+- **Selection state.** §25G requires a selected anchor but names no mechanism. The selection is a URL search param, so Today stays a server component and no client state is needed.
+- **Edge appearance.** §21 allows distinguishing accepted from proposed. The frozen §9 edge type carries no status, so all edges render alike, with opacity from confidence.
+
+## Phase 4 review (2026-09-17)
+- **Lenses.** Four: algorithm conformance, data correctness, UI and Next.js behaviour, test strength. Three skeptics per finding. Of 24 findings, 7 survived (5 distinct issues) and all are fixed:
+  1. **Overlapping nodes (high).** Jitter came from each id alone, so nodes sharing a house landed within about 1° of each other; on the seed, pairs sat 0.9 px apart and the later-painted circle covered the earlier one, making it unclickable. Sector-relative spreading fixes it.
+  2. **Hash collapse (medium).** `stableUnitHash` took FNV-1a's high bits with no avalanche step, so ids sharing a prefix (`seed-01`, `seed-02`, ...) spanned 6% of the range. A finalizer now spreads them over 85%.
+  3. **Unbounded pool (medium).** Scoring every object sharing a house made a projection take 406 ms at 10,000 objects, against §38's 150 ms interaction target. Each unbounded arm is now capped.
+  4. **Invented house (medium).** An object with no house vector was drawn and announced as "1 · Self" while the same page's stream showed no house for it. Such objects are now left out of the dial.
+  5. **Full page reload (medium).** The text list used a plain anchor, so selecting a thought there reloaded the document and discarded unsent capture text. It uses `next/link` like every other link now.
+- **Rejected by the skeptics (17).** Including: `role="img"` hiding the node links (disproved in a real browser), an anchor with no concepts getting a 2-node constellation (SPEC allows it), and several test-coverage suggestions that are now covered anyway.
+- **Found while fixing.** A5 could not click an arbitrary node when a house sector is crowded: the ±10° cap cannot separate many circles of radius 12. The test now clicks the topmost node, and the limit is recorded in `OPEN_QUESTIONS.md`.
+
+## Phase 4 deviations from SPEC.md
+- none.
+
+## Accepted limitation: crowded house sectors (approved 2026-09-17)
+The frozen §21 geometry cannot keep node circles apart when many thoughts share one dominant house. The reviewer accepted this for v0.1. The deterministic geometry stays the implementation contract, and the following are explicitly out of bounds: widening the angular jitter, shrinking the node-radius range, force-directed layout, collision simulation, WebGL, amending `SPEC.md`, or redesigning the renderer. Visual overlap is a future renderer/layout research item for the later higher-fidelity PCF visual system, and stays documented in `OPEN_QUESTIONS.md`.
+
+## Phase 4 blockers
+- none. `OPEN_QUESTIONS.md` records the accepted crowded-sector limitation and the still-unassigned capture retry.
+
+## Next action
+Phase 4 is checkpointed. Wait for explicit approval before Phase 5: the four cognitive operators (§23), retrieval packets, operator persistence and feedback buttons on the thought cards. Phase 5 routes must apply the loopback check, and the operator buttons will need the card's link structure revisited.
 
 ## Phase 3 requirements
 - SPEC §41 Phase 3: raw capture, extraction, concept persistence, claim persistence, house classifier, fallback behavior. Acceptance: capture integration suite green.
@@ -411,8 +475,8 @@ Not added yet (later phases): `zod` (Phase 1), `@anthropic-ai/sdk` (never).
 | 0 — Scaffold | approved, tag `pcf-v0.1-phase-0` | npm test PASS, npm run build PASS |
 | 1 — Domain + persistence | approved, tag `pcf-v0.1-phase-1` | npm test PASS (27), npm run build PASS |
 | 2 — Claude subscription adapter | approved, tag `pcf-v0.1-phase-2` | npm test PASS (87), npm run build PASS, e2e PASS, preflight PASS 5/5 |
+| 4 — Relevance + constellation | approved, tag `pcf-v0.1-phase-4` | npm test PASS (267), build PASS, e2e PASS (A1-A3, A5, A6) |
 | 3 — Capture intelligence | approved, tag `pcf-v0.1-phase-3` | npm test PASS (231), build PASS, e2e PASS (A1-A3 + 13 capture tests, production and dev) |
-| 4 — Relevance + constellation | not started | — |
 | 5 — Four operators | not started | — |
 | 6 — Cognitive return | not started | — |
 | 7 — Product polish | not started | — |

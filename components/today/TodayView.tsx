@@ -6,22 +6,33 @@ import { CaptureBox } from "./CaptureBox";
 import { ThoughtStream, type StreamItem } from "./ThoughtStream";
 import { ConstellationPane } from "@/components/constellation/ConstellationPane";
 import { getAppDatabase } from "@/lib/db/database";
-import { getHouseScores, listObjectsCreatedBetween } from "@/lib/db/repositories/objects";
+import { getHouseScores, getObject, listObjectsCreatedBetween } from "@/lib/db/repositories/objects";
 import { dominantHouse } from "@/lib/domain/houses";
+import { buildConstellation } from "@/lib/engine/constellation";
 import { isLoopbackRequest } from "@/lib/utils/local-request";
 import { localDayBounds } from "@/lib/utils/time";
 
+/** The selected object travels in the URL, so every view of Today is shareable and server-rendered. */
+export const FOCUS_PARAM = "focus";
+
 /** Today is the only primary surface (SPEC.md §25). It reads local state on every request. */
-export async function TodayView() {
+export async function TodayView({ focusId }: { focusId?: string }) {
   await connection();
   // Local thoughts are shown only to requests addressed to this machine (see lib/utils/local-request.ts).
   if (!isLoopbackRequest(await headers())) notFound();
   const db = getAppDatabase();
   const { start, end } = localDayBounds();
-  const items: StreamItem[] = listObjectsCreatedBetween(db, start, end).map((object) => {
+  const today = listObjectsCreatedBetween(db, start, end);
+  const items: StreamItem[] = today.map((object) => {
     const houses = getHouseScores(db, object.id);
     return { object, dominantHouse: houses ? dominantHouse(houses) : null };
   });
+
+  // §25G: the selected object anchors the constellation; with none selected, the latest object today.
+  const selected = focusId ? getObject(db, focusId) : null;
+  const anchorId = selected?.id ?? today[0]?.id ?? null;
+  const constellation = anchorId ? buildConstellation(db, anchorId) : null;
+  const hrefFor = (id: string) => `/?${FOCUS_PARAM}=${encodeURIComponent(id)}`;
 
   return (
     <main className="today">
@@ -29,9 +40,9 @@ export async function TodayView() {
       <div className="today__body">
         <section className="today__stream" aria-label="Today">
           <CaptureBox />
-          <ThoughtStream items={items} />
+          <ThoughtStream items={items} selectedId={anchorId} hrefFor={hrefFor} />
         </section>
-        <ConstellationPane />
+        <ConstellationPane constellation={constellation} hrefFor={hrefFor} />
       </div>
     </main>
   );

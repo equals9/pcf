@@ -58,6 +58,14 @@ process.on("exit", cleanup);
 
 const env = { ...process.env, PATH, PCF_DB_PATH: join(dataDir, "pcf-e2e.db"), PCF_E2E_FAKE_CLAUDE: "1" };
 
+// SPEC §35 synthetic seed, so the constellation has a graph to project.
+const seed = spawnSync(process.execPath, [join(repo, "node_modules", "tsx", "dist", "cli.mjs"), join(repo, "scripts", "seed-demo.ts")], {
+  cwd: repo,
+  env,
+  stdio: "inherit",
+});
+if (seed.status !== 0) process.exit(seed.status ?? 1);
+
 if (mode === "production") {
   const build = spawnSync(process.execPath, [nextBin, "build"], { cwd: repo, env, stdio: "inherit" });
   if (build.status !== 0) process.exit(build.status ?? 1);

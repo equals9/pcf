@@ -38,3 +38,76 @@ test("A3: capturing with Cmd/Ctrl + Enter puts the thought in the Today stream",
   await page.reload();
   await expect(page.getByRole("list", { name: "Today's thoughts" }).getByRole("article").filter({ hasText: text })).toHaveCount(1);
 });
+
+test("A5: selecting a thought changes the constellation anchor", async ({ page }) => {
+  await page.goto("/");
+  const text = `Retrieval quality may matter more than model size ${Date.now()}`;
+  const box = page.getByRole("textbox", { name: "What are you thinking?" });
+  await box.fill(text);
+  const captured = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/capture" && r.request().method() === "POST");
+  await box.press("ControlOrMeta+Enter");
+  const body = await (await captured).json();
+
+  // With nothing selected, the anchor is the latest thought today (SPEC §25G).
+  const anchorName = page.locator(".constellation__anchor-name");
+  await expect(anchorName).toHaveText(body.object.title);
+
+  // Clicking a node on the dial moves the constellation to that thought (SPEC §25G). The last node is
+  // painted on top, so it is clickable even when a crowded house sector packs circles together.
+  const node = page.locator(".constellation__node").last();
+  const nodeLabel = (await node.getAttribute("aria-label"))!;
+  const nodeName = nodeLabel.slice(0, nodeLabel.lastIndexOf(" — house"));
+  expect(nodeName).not.toBe(body.object.title);
+  await node.click();
+  await expect(anchorName).toHaveText(nodeName);
+  await expect(page).toHaveURL(/\?focus=/);
+
+  // Selecting a thought from the text list does the same.
+  const other = page.locator(".constellation__list a").first();
+  const otherName = (await other.textContent())!.trim();
+  await other.click();
+  await expect(anchorName).toHaveText(otherName);
+
+  // And selecting a thought card in the stream anchors on it.
+  await page.goto("/");
+  const card = page.locator(".stream__list .thought__link").first();
+  await card.click();
+  await expect(anchorName).toHaveText(body.object.title);
+  await expect(page.locator(".thought--selected")).toHaveCount(1);
+});
+
+test("selecting a thought keeps text that has not been captured yet", async ({ page }) => {
+  await page.goto("/?focus=seed-06");
+  const draft = "a half-written thought that must survive navigation";
+  const box = page.getByRole("textbox", { name: "What are you thinking?" });
+  await box.fill(draft);
+
+  await page.locator(".constellation__list a").first().click();
+  await expect(page).toHaveURL(/\?focus=/);
+  await expect(box).toHaveValue(draft);
+
+  await page.locator(".constellation__node").last().click();
+  await expect(box).toHaveValue(draft);
+});
+
+test("A6: the constellation shows no more than 12 related nodes", async ({ page }) => {
+  const nodes = page.locator(".constellation__node");
+
+  // seed-06 has 15 candidates in the §35 seed, so an uncapped constellation would draw 15 here.
+  await page.goto("/?focus=seed-06");
+  await expect(nodes.first()).toBeVisible();
+  expect(await nodes.count()).toBe(12);
+  // The same thoughts are listed as text, so the graph is not the only way to read them (SPEC §37).
+  expect(await page.locator(".constellation__list li").count()).toBe(12);
+
+  // And a freshly captured thought stays within the cap.
+  await page.goto("/");
+  const box = page.getByRole("textbox", { name: "What are you thinking?" });
+  await box.fill(`A thought with many neighbours in the seeded graph ${Date.now()}`);
+  const captured = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/capture" && r.request().method() === "POST");
+  await box.press("ControlOrMeta+Enter");
+  await captured;
+  await expect(nodes.first()).toBeVisible();
+  expect(await nodes.count()).toBeGreaterThan(0);
+  expect(await nodes.count()).toBeLessThanOrEqual(12);
+});

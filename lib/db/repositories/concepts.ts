@@ -47,6 +47,23 @@ export function listConceptsForObject(db: PcfDatabase, objectId: string): Concep
 }
 
 /** Ids of other objects sharing at least one concept with the object (SPEC §17 step 1), in id order. */
+/** Like `listObjectIdsSharingConcepts`, but only the `limit` most recently created matches. */
+export function listRecentObjectIdsSharingConcepts(db: PcfDatabase, objectId: string, limit: number): string[] {
+  if (limit <= 0) return [];
+  const rows = db
+    .prepare(
+      `SELECT o.id AS id FROM objects o
+       WHERE o.id <> ? AND EXISTS (
+         SELECT 1 FROM object_concepts mine
+         JOIN object_concepts other ON other.concept_id = mine.concept_id
+         WHERE mine.object_id = ? AND other.object_id = o.id
+       )
+       ORDER BY o.created_at DESC, o.id DESC LIMIT ?`,
+    )
+    .all(objectId, objectId, limit) as { id: string }[];
+  return rows.map((r) => r.id);
+}
+
 export function listObjectIdsSharingConcepts(db: PcfDatabase, objectId: string): string[] {
   const rows = db
     .prepare(

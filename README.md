@@ -30,7 +30,7 @@ npm run build
 
 A capture is stored before any AI work starts. The request then waits for extraction, house classification and relation inference, which can take a while; if any of those fail, the thought is still shown in Today.
 
-The acceptance tests start their own servers with a temporary database and a fake `claude` CLI placed first on `PATH`; they never call Claude. They run on macOS and Linux only.
+The acceptance tests start their own servers with a temporary database and a fake `claude` CLI placed first on `PATH`; they never call Claude. They run on macOS and Linux only. Stop `npm run dev` first: Next allows only one development server per directory.
 
 ## Manual preflight
 
