@@ -6,6 +6,7 @@
 //   pcf-e2e-extract-invalid    extraction output fails validation (both attempts)
 //   pcf-e2e-houses-invalid     house classification output fails validation (both attempts)
 //   pcf-e2e-relations-invalid  relation inference output fails validation (both attempts)
+//   pcf-e2e-operator-invalid   every operator's output fails validation (both attempts)
 //   pcf-e2e-unavailable        every structured call reports a provider error
 //   pcf-e2e-slow               every structured call waits 1.5 s first
 import { readFileSync } from "node:fs";
@@ -25,13 +26,37 @@ if (args[0] === "--version") {
 const schemaIndex = args.indexOf("--json-schema");
 const schema = schemaIndex >= 0 ? JSON.parse(args[schemaIndex + 1]) : {};
 const keys = Object.keys(schema.properties ?? {});
-const task = keys.includes("scores") ? "classify" : keys.includes("proposals") ? "relations" : keys.includes("concepts") ? "extract" : "unknown";
+const task = keys.includes("scores")
+  ? "classify"
+  : keys.includes("proposals")
+    ? "relations"
+    : keys.includes("connections")
+      ? "connect"
+      : keys.includes("possibilities")
+        ? "expand"
+        : keys.includes("coreAssumptions")
+          ? "challenge"
+          : keys.includes("experimentTitle")
+            ? "act"
+            : keys.includes("concepts")
+              ? "extract"
+              : "unknown";
 
 const stdin = readFileSync(0, "utf8");
 const afterFirstLine = (text) => JSON.parse(text.slice(text.indexOf("\n") + 1).split("\n\nYour previous response")[0]);
 const input = task === "unknown" ? null : afterFirstLine(stdin);
-// Only the thought being captured selects behaviour, never candidate text.
-const content = task === "extract" ? input : task === "classify" ? input.content : task === "relations" ? input.source.content : "";
+const OPERATORS = ["connect", "expand", "challenge", "act"];
+// Only the thought being captured or reasoned over selects behaviour, never other objects' text.
+const content =
+  task === "extract"
+    ? input
+    : task === "classify"
+      ? input.content
+      : task === "relations"
+        ? input.source.content
+        : OPERATORS.includes(task)
+          ? input.focus.content
+          : "";
 
 const envelope = (payload) =>
   JSON.stringify({ type: "result", subtype: "success", is_error: false, result: JSON.stringify(payload), structured_output: payload });
@@ -61,6 +86,61 @@ function respond() {
       scores["5"] = 0.8;
       scores["9"] = 0.4;
       return envelope({ scores, dominantHouses: [5], rationale: "Fake classification." });
+    }
+    case "connect": {
+      if (content.includes("pcf-e2e-operator-invalid")) return envelope(invalid);
+      const target = input.relatedObjects[0];
+      return envelope({
+        connections: target
+          ? [
+              {
+                targetId: target.id,
+                relationType: "related_to",
+                explanation: "Fake connection for the acceptance tests.",
+                whyNonObvious: "Different wording, same tension.",
+                confidence: 0.7,
+              },
+            ]
+          : [],
+      });
+    }
+    case "expand": {
+      if (content.includes("pcf-e2e-operator-invalid")) return envelope(invalid);
+      return envelope({
+        possibilities: [
+          {
+            title: "Fake adjacent possibility",
+            hypothesis: "Something that could be true, stated as a possibility.",
+            groundedInObjectIds: [input.focus.id],
+            bridgeExplanation: "It follows from the focus thought.",
+            whyNovel: "It is not a restatement.",
+            nextQuestion: "What would make this testable?",
+          },
+        ],
+      });
+    }
+    case "challenge": {
+      if (content.includes("pcf-e2e-operator-invalid")) return envelope(invalid);
+      return envelope({
+        coreAssumptions: ["Fake assumption."],
+        strongestObjection: "Fake strongest objection for the acceptance tests.",
+        failureModes: ["Fake failure mode."],
+        missingEvidence: ["Fake missing evidence."],
+        alternativeInterpretation: null,
+        confidenceAssessment: { currentEstimate: 0.5, rationale: "Fake rationale." },
+      });
+    }
+    case "act": {
+      if (content.includes("pcf-e2e-operator-invalid")) return envelope(invalid);
+      return envelope({
+        experimentTitle: "Fake experiment",
+        hypothesis: "Fake hypothesis.",
+        smallestAction: "Fake smallest action for the acceptance tests.",
+        steps: ["Fake step one."],
+        successCriterion: "Fake success.",
+        failureCriterion: "Fake failure.",
+        evidenceToCapture: ["Fake evidence."],
+      });
     }
     case "relations": {
       if (content.includes("pcf-e2e-relations-invalid")) return envelope(invalid);

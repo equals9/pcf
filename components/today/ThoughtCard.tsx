@@ -1,10 +1,12 @@
 import Link from "next/link";
+import { OperatorBar } from "@/components/operators/OperatorBar";
 import { HOUSES } from "@/lib/domain/houses";
 import type { CognitiveObject, HouseNumber } from "@/lib/domain/types";
 
 /**
  * One thought in the Today stream (SPEC.md §25C): time, title, content preview and dominant house.
- * Selecting a card makes it the constellation anchor (§25G). The four operator buttons arrive in Phase 5.
+ * Selecting a card makes it the constellation anchor (§25G). The four operators sit below the text (§25D);
+ * they are buttons, not links, so invoking one never navigates away from the page.
  */
 export function ThoughtCard({
   object,
@@ -35,6 +37,7 @@ export function ThoughtCard({
         {object.title ? <h3 className="thought__title">{object.title}</h3> : <span className="visually-hidden">Focus this thought</span>}
         <span className="thought__preview">{object.content}</span>
       </Link>
+      <OperatorBar objectId={object.id} />
     </article>
   );
 }

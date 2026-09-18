@@ -16,6 +16,19 @@ Only genuine blockers belong here. This is not a wishlist.
 - **Current state:** nodes sharing a sector are spread evenly across the ±10° band, which keeps every node's centre clear on the §35 seed (verified for all 15 anchors). Every node is also reachable from the text list beneath the dial, so no thought is unreachable. Crowded sectors still overlap visually.
 - **Future research:** how a higher-fidelity renderer should place many nodes in one house sector while keeping layout deterministic and inspectable. Any such change amends §21 and needs explicit approval.
 
+## Saturn's first model attempt is often rejected
+
+- **Status:** open, raised 2026-09-18 during the Phase 5 live preflight. It does not block Phase 5.
+- **Observation:** across five live Challenge invocations, the first CLI attempt failed three times with an error envelope (exit 1, zero output tokens after about 0.8 s of API time), while Connect, Expand and Act each succeeded on their first attempt. The accepted single retry recovered it twice; once both attempts failed and the user saw the §28 message. Latency ranged from 30 s to 107 s. Nothing was persisted for the failures.
+- **Current state:** this is provider-side behaviour reached through the frozen Phase 2 adapter, whose retry semantics are checkpointed and must not be layered on. PCF already reports the failure truthfully and stores nothing.
+- **Decision needed:** whether to do anything in v0.1 — for example a user-facing "try again" control (which is the same question as the capture retry below), or leaving it as is and watching whether the provider behaviour settles.
+
+## Can a proposed relation be accepted or rejected?
+
+- **Status:** open, raised 2026-09-18. It does not block any phase.
+- **Gap:** relations are created as `proposed` (Phase 3) and Mercury suggests more (Phase 5), but §26 defines no endpoint and §25 defines no control for accepting or rejecting one. RELATION_ACCEPTED and RELATION_REJECTED exist in §11, the schema supports both statuses, and §19 and the constellation both read them, so the data path is ready and only the user action is missing. SPEC P9 says the user remains the authority over relations.
+- **Decision needed:** which phase gives the user that control, and through which request. Phase 6 works with the Tension card and may need it; otherwise Phase 7.
+
 ## Resolved
 
 ### Which phase builds the capture API route and the Today capture UI? (resolved 2026-09-17)

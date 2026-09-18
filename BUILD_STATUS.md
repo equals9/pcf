@@ -1,8 +1,119 @@
 # PCF Build Status
 
 ## Current phase
-Phase 4 — Relevance + constellation: COMPLETE and approved. Checkpointed with tag `pcf-v0.1-phase-4`. Phase 5 not started.
-Phase 3 approved and checkpointed at commit `adebe18`, tag `pcf-v0.1-phase-3`.
+Phase 5 — Four cognitive operators: COMPLETE and approved. Checkpointed with tag `pcf-v0.1-phase-5`. Phase 6 not started.
+Phase 4 approved and checkpointed at commit `fd76f9a`, tag `pcf-v0.1-phase-4`.
+
+## Phase 5 requirements
+- SPEC §41 Phase 5: Connect, Expand, Challenge, Act, retrieval packets, operator persistence, feedback buttons. Acceptance: all four structured contracts green.
+- Contracts: SPEC §10 (frozen `operator_runs` and `feedback` tables), §11 (event types), §23 (packet and the four result shapes), §25C/§25D, §26 (`POST /api/object/:id/operator`, `POST /api/feedback`), §28, §29, §32 operator test, §33 A4, §37, §38, §39.
+
+## Phase 5 as implemented
+- **Retrieval packet (`lib/engine/operator-runner.ts`).** Exactly the §23 categories and nothing else:
+  - `focus`: the anchor object.
+  - `concepts`: the anchor's concepts.
+  - `houseVector`: the anchor's stored vector. An object with no vector is refused (`not_classified`) rather than given an invented one.
+  - `relatedObjects`: the Phase 3 §17 candidates, already ranked by §19 relevance, archived objects dropped, capped at 8.
+  - `relations`: every persisted relation, with its status and origin, between two objects in the packet.
+  - `claims`: the claims of the focus and of the related objects.
+  - The packet is deterministic for fixed canonical state, and the whole prompt body is the packet as JSON. System prompts are fixed text and carry no user content.
+- **One invocation.** `runOperator` makes exactly one `Reasoner.runStructured` call and never retries; the Phase 2 adapter still owns the single retry, so one click costs at most 2 CLI invocations of one model attempt each.
+- **Result contracts.** Zod schemas mirror §23: Connect (max 3, `targetId` restricted to the packet's related objects), Expand (max 3, `groundedInObjectIds` non-empty and restricted to packet objects), Challenge (max 5 assumptions, failure modes and missing-evidence items, nullable alternative interpretation, confidence assessment), Act (max 5 steps). Output that breaks a contract is rejected and nothing is stored.
+- **Persistence.** On success only, one immediate transaction writes one `operator_runs` row and one OPERATOR_INVOKED event. `input_context_json` records ids (focus, concepts, related objects, relations, claims) plus the house vector, so the packet stays reconstructable without duplicating content. Runs are never overwritten; repeated invocations are separate rows.
+- **What an operator never does.** It does not touch raw content, claims, relations, house scores, concepts or history. A Connect suggestion stays a suggestion: no relation is created and no proposed relation is accepted. Tests pin each of these.
+- **Feedback.** `recordFeedback` writes one `feedback` row and one FEEDBACK_RECORDED event for an existing operator run or object, and never modifies the run. v0.1 learns nothing from it (§39).
+- **Routes.** `POST /api/object/:id/operator` returns `{runId, operator, result}` plus an additive `objects` list (id and title of the packet's objects) so results can name thoughts instead of raw ids. `POST /api/feedback` returns the stored record. Both are loopback-only, JSON-only adapters with no prompts, retrieval, retries or writes of their own. 404 for an unknown object, 409 `not_classified`, 503 with the §28 copy for a failed operation.
+- **Today UI.** Each thought card carries exactly ☿ Connect, ♃ Expand, ♄ Challenge and ♂ Act below the text, outside the focus link, so invoking one is a fetch and never a navigation. While one runs, all four are disabled and the §38 wording is shown ("Connecting…", "Expanding…", "Challenging…", "Designing experiment…"). The result appears inline beneath the thought with Useful / Not useful, keyed by run id so a new result never inherits the previous result's feedback state. The capture draft, the constellation focus and the `?focus=` URL are untouched.
+
+## Phase 5 acceptance gates (2026-09-18)
+| Gate | Result |
+|------|--------|
+| `npm test` | PASS: 23 files, 330 tests |
+| `npx tsc --noEmit` | PASS |
+| `npm run build` | PASS; `/api/object/[id]/operator` and `/api/feedback` render per request |
+| `npm run test:e2e` | PASS: 55 passed, 1 production-only test skipped on dev; A1, A2, A3, A4, A5, A6 plus the capture, constellation and operator suites, against the production build and the dev server |
+| SPEC §32 operator test | PASS: each of the four operators validates output, persists one `operator_run` and creates one OPERATOR_INVOKED event |
+| Mutation checks | 20 of 20 injected regressions fail the suite, after the closure pass below added the missing test |
+| Subscription boundary (§34) and no-real-claude guard | PASS |
+| Loopback security | PASS: both new routes refuse a foreign Host or Origin, with no writes and no reasoner call |
+| Future-research scan | none |
+| `SPEC.md`, `CLAUDE.md`, migrations, schema, Phase 2 adapter, Phase 3/4 engines, research spec, dependencies | unchanged |
+
+## Phase 5 live preflight (2026-09-18, real subscription)
+One invocation of each operator on the stored thought "Keeping persistent AI memory outside model weights for inspectability" (6 concepts, 8 related objects, 5 relations, 7 claims; packet 9,131 characters).
+
+| Operator | Latency | Outcome |
+|---|---|---|
+| ☿ Connect | 29.7 s | 3 connections, each citing a real packet object, with a reason the link is not obvious |
+| ♃ Expand | 35.0 s | 3 possibilities, each citing supplied object ids and phrased as possibility, not fact |
+| ♄ Challenge | 107.2 s | failed: both model attempts were rejected. Later diagnostic runs succeeded in 30-100 s |
+| ♂ Act | 31.4 s | a concrete experiment with steps, success and failure criteria |
+
+- Retrieval context was relevant: the packet carried the real seed thoughts on both sides of the memory argument, and the results used them by name.
+- The four results were clearly differentiated: Connect found a support and a tension the user had not linked, Expand proposed adjacent framings with a next question, Challenge attacked the assumption that storage location implies inspectability, Act proposed a one-week editing test with recorded evidence.
+- **Saturn is intermittent.** Across five live attempts its first CLI attempt failed three times with an error envelope (exit 1, zero output tokens after ~0.8 s of API time). The accepted single retry recovered it twice; once both attempts failed and the user-facing §28 message was shown. This is provider-side behaviour through the frozen adapter, not an operator defect: no run was persisted for the failure. Recorded in `OPEN_QUESTIONS.md`.
+- The live preflight wrote exactly 3 `operator_runs` and 3 OPERATOR_INVOKED events, and created no objects, claims or relations. The anchor's raw content and `updated_at` are unchanged.
+
+## Phase 5 closure pass (2026-09-18)
+Two review items were resolved before checkpointing.
+
+### 1. Act proposed an experiment PCF cannot run
+The live preflight had Mars propose editing the anchor's corrupted raw text to see whether the edit propagated. Raw capture is immutable, so that experiment could never be carried out: a semantically relevant result that was operationally impossible.
+
+- **Fix.** `PCF_OPERATING_CONSTRAINTS` in `lib/ai/prompts/operators.ts`: fixed operator text, added to Mars's system prompt only. It states that raw text is never edited, replaced, corrected or deleted, even when malformed; that extracted metadata, claims, relations, house scores and history are canonical and not rewritten, and that the user cannot accept or reject a proposed relation; exactly what the user can do today (capture, read Today, select a thought, run the four operators, rate a result); that nothing proposed is executed and no step has happened yet; and that an experiment may live outside PCF, with capture as the way to record a result. If the ideal experiment needs a capability PCF lacks, Mars must propose the nearest feasible experiment and name the missing capability rather than assume it.
+- **Where.** The system prompt, not the retrieval packet: the packet stays user-derived canonical state. The other three operators are unchanged. Nothing was made editable, no capability, migration or dependency was added, and the adapter and its retry policy are untouched.
+- **Regression tests** (`tests/integration/operators.test.ts`, "§23D Act feasibility"), built on the real failure mode — an anchor whose raw content is duplicated and truncated:
+  - the contract reaches Mars in the system prompt, and each invariant is pinned separately (immutability; malformed content still not repairable; canonical records; no accept/reject; nothing executed; nearest feasible experiment; never assume a capability);
+  - the contract is absent from the packet, and the malformed raw text reaches Mars exactly as captured;
+  - the other three operators do not receive it;
+  - the run leaves the raw thought, its claims, relations and house scores untouched;
+  - Mars may still propose an experiment that captures new thoughts, and the operator records the proposal without creating anything itself.
+  Four mutants confirm these tests bite: removing the contract, claiming content is correctable, moving the contract into the packet, and dropping the nearest-feasible rule are each caught.
+- **Live rerun** (one Act invocation on the same anchor, 77.5 s): the experiment is now feasible end to end — read the corrupted text, capture a correction as a new thought, run operators on it, check whether the two thoughts retrieve each other, capture a verdict, rate the results. Its last evidence item names what cannot be tested: "PCF has no edit or delete, and no control to accept or reject a proposed relation". The other three operators were not rerun.
+
+### 2. The surviving mutation, identified
+- **Mutation.** Delete the in-flight guard (`if (inFlight.current) return; inFlight.current = true;`) from `invoke` in `components/operators/OperatorBar.tsx`.
+- **Invariant.** One operator run per card at a time: one click, one Claude call, one `operator_run`.
+- **Why the suite missed it.** The four buttons also carry `disabled={busy}`, and a disabled button fires no click, so every Playwright click path was already blocked. Removing `disabled` alone, or both guards, was caught; removing the ref alone was not.
+- **Disposition: a real defect, not an equivalent mutant.** `disabled` only takes effect once React commits the render. In a production build that commit is deferred, so clicks dispatched in the same task — a fast double-click, or two operator buttons in quick succession — reach `invoke` before the buttons disable. The ref is the only thing that stops them.
+- **Test added.** "two operator clicks in the same task run only one operator" dispatches three clicks inside one JS task. With the guard: one POST and one result. Without it: three POSTs, three Claude calls and three runs. Mutation score is now 20 of 20.
+
+## Phase 5 delivered
+- **Created:** `lib/engine/operator-runner.ts`; `lib/ai/prompts/operators.ts`; `app/api/object/[id]/operator/route.ts`; `app/api/feedback/route.ts`; `components/operators/OperatorBar.tsx` and `OperatorResult.tsx`; `tests/integration/operators.test.ts`; `tests/integration/operator-route.test.ts`; `tests/acceptance/operators.spec.ts`; `tests/fixtures/operator-fixtures.ts`.
+- **Modified:** `components/today/ThoughtCard.tsx` (operator bar below the text, outside the focus link); `app/globals.css`; `tests/fixtures/e2e-bin/claude` (operator answers for the fake CLI).
+- **Dependencies added:** none.
+
+## Phase 5 interpretation decisions (non-blocking)
+- **Related objects.** §23 caps them at 8 but does not say how to choose them, so Phase 5 reuses the Phase 3 §17 candidates (already §19-ranked) rather than adding a second retrieval path. Archived objects are dropped: the user put them away.
+- **Unclassified anchors.** §23's packet requires a `houseVector`. An object without one is refused with a truthful message instead of being sent a fabricated vector, so all four operators are unavailable until classification succeeds.
+- **Relations and claims in the packet.** Only relations whose both ends are in the packet, so no id dangles; claims of the focus and of the related objects. Rejected relations are included with their status, so an operator can see that a link was declined.
+- **Connect never persists.** §23A says no new object is created automatically, and §26 defines no accept endpoint, so connections are shown as suggestions only. Accepting one is not possible in v0.1; see `OPEN_QUESTIONS.md`.
+- **Operator response.** The §26 response carries `runId`, `operator` and `result`, plus an additive `objects` list so the UI can name cited thoughts instead of printing raw ids.
+- **Feedback targets.** `operator_run` (the §26 example) and `object`. Both are validated to exist before anything is written.
+- **`input_context_json`.** Ids plus the house vector, not copies of the content, so history stays inspectable without duplicating canonical text.
+- **One operator at a time per card.** A run disables the card's four buttons; a second result replaces the first on screen. Runs remain in the database either way.
+
+## Phase 5 review (2026-09-18)
+- **Lenses.** Seven: retrieval integrity, epistemic integrity, persistence integrity, security and the Claude boundary, UI state, scope and test strength, partial and adversarial state. Three skeptics per finding; 34 findings, 8 survived, which were 3 distinct issues, all fixed:
+  1. **Feedback state leaked between results (high, found by five lenses).** After rating one result, the next result on the same card rendered "Thanks — recorded." and could never be rated, because React preserved the feedback control's state. The result is now keyed by run id, and an acceptance test rates two results in a row.
+  2. **Frozen §23 caps were not pinned (medium).** The cap tests built their fixtures from the constants they were testing, so widening a constant passed. The numbers are now asserted as literals and the over-long fixtures use literals.
+  3. **A layered retry would not have been caught (medium).** Failure-path tests did not assert the call count, so an engine-level retry passed. They now assert exactly one reasoner call.
+- **Rejected by the skeptics (26).** Including: archived candidates consuming packet slots before the filter, a previous result staying on screen after a failure, the §28 copy on the `not_classified` path, unbounded related-object content, and several accessibility suggestions.
+
+## Phase 5 deviations from SPEC.md
+- none.
+
+## Phase 5 blockers
+- none. `OPEN_QUESTIONS.md` records the Saturn retry behaviour, the still-unassigned capture retry and the missing accept/reject control for proposed relations.
+
+## Accepted Phase 5 decisions (approved 2026-09-18)
+- **Act feasibility.** The fixed Mars operating-constraints contract stays in the operator's system prompt, outside the user-derived retrieval packet. Raw capture stays immutable, including malformed, duplicated or truncated captures. Act may propose feasible actions, experiments outside PCF, and capturing new observations as new thoughts. Act may not edit or replace historical raw capture, silently rewrite canonical state, assume capabilities that do not exist, execute anything for the user, or assume a proposed action has already happened.
+- **Mutation guard.** The synchronous `inFlight` guard stays, independently of React's `disabled` state, and the same-task multiple-click regression test is required.
+- **Saturn reliability.** The Claude adapter and its retry behaviour are unchanged; there is no Challenge-specific retry path. The provider-side zero-output failure stays documented for observation.
+- **Relation accept/reject and capture retry.** Both remain open questions; neither was implemented at checkpoint.
+
+## Next action
+Wait for explicit approval before Phase 6: cognitive return — resurfacing, contradiction detection, the Return card and the Tension card.
 
 ## Phase 4 requirements
 - SPEC §41 Phase 4: relevance score, MMR, relation candidates, relation inference, deterministic constellation geometry, SVG visualization. Acceptance: constellation tests green.
@@ -475,8 +586,8 @@ Not added yet (later phases): `zod` (Phase 1), `@anthropic-ai/sdk` (never).
 | 0 — Scaffold | approved, tag `pcf-v0.1-phase-0` | npm test PASS, npm run build PASS |
 | 1 — Domain + persistence | approved, tag `pcf-v0.1-phase-1` | npm test PASS (27), npm run build PASS |
 | 2 — Claude subscription adapter | approved, tag `pcf-v0.1-phase-2` | npm test PASS (87), npm run build PASS, e2e PASS, preflight PASS 5/5 |
+| 5 — Four operators | approved, tag `pcf-v0.1-phase-5` | npm test PASS (330), build PASS, e2e PASS (A1-A6), live preflight run, mutations 20/20 |
 | 4 — Relevance + constellation | approved, tag `pcf-v0.1-phase-4` | npm test PASS (267), build PASS, e2e PASS (A1-A3, A5, A6) |
 | 3 — Capture intelligence | approved, tag `pcf-v0.1-phase-3` | npm test PASS (231), build PASS, e2e PASS (A1-A3 + 13 capture tests, production and dev) |
-| 5 — Four operators | not started | — |
 | 6 — Cognitive return | not started | — |
 | 7 — Product polish | not started | — |
