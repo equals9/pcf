@@ -21,6 +21,15 @@ export function ConstellationGraph({ constellation, hrefFor }: { constellation: 
   const points = new Map(nodes.map((n) => [n.object.id, { x: n.x, y: n.y }]));
   points.set(anchor.id, { x: CONSTELLATION_CENTER, y: CONSTELLATION_CENTER });
   const anchorLabel = anchor.title ?? anchor.content;
+  const nameOf = (id: string) => (id === anchor.id ? anchorLabel : (nodes.find((n) => n.object.id === id)?.object.title ?? nodes.find((n) => n.object.id === id)?.object.content ?? id));
+  // The lines the dial draws, in words: "supports X" for an outgoing relation, "X supports this" for an incoming one.
+  const linksOf = (id: string) =>
+    edges
+      .filter((edge) => edge.sourceId === id || edge.targetId === id)
+      .map((edge) => {
+        const type = edge.relationType.replace(/_/g, " ");
+        return edge.sourceId === id ? `${type} ${nameOf(edge.targetId)}` : `${nameOf(edge.sourceId)} ${type} this`;
+      });
 
   return (
     <>
@@ -51,14 +60,18 @@ export function ConstellationGraph({ constellation, hrefFor }: { constellation: 
         <span className="constellation__anchor-name">{anchorLabel}</span>
       </p>
       <ol className="constellation__list">
-        {nodes.map((node) => (
-          <li key={node.object.id}>
-            <Link href={hrefFor(node.object.id)}>{node.object.title ?? node.object.content}</Link>{" "}
-            <span className="constellation__list-house">
-              {node.dominantHouse} · {HOUSES[node.dominantHouse - 1].name}
-            </span>
-          </li>
-        ))}
+        {nodes.map((node) => {
+          const links = linksOf(node.object.id);
+          return (
+            <li key={node.object.id}>
+              <Link href={hrefFor(node.object.id)}>{node.object.title ?? node.object.content}</Link>{" "}
+              <span className="constellation__list-house">
+                {node.dominantHouse} · {HOUSES[node.dominantHouse - 1].name}
+              </span>
+              {links.length > 0 && <span className="constellation__list-links">{links.join("; ")}</span>}
+            </li>
+          );
+        })}
       </ol>
     </>
   );

@@ -90,6 +90,30 @@ test("selecting a thought keeps text that has not been captured yet", async ({ p
   await expect(box).toHaveValue(draft);
 });
 
+test("the constellation is read and navigated through its text list (SPEC §37)", async ({ page }) => {
+  await page.goto("/?focus=seed-06");
+  const nodes = page.locator(".constellation__node");
+  await expect(nodes.first()).toBeVisible();
+
+  // The dial is a picture: its node links are pointer targets only, never keyboard tab stops.
+  expect(await page.locator('.constellation__node[tabindex="-1"]').count()).toBe(await nodes.count());
+
+  // Tabbing out of the stream column lands in the text list, not on an invisible circle.
+  await page.evaluate(() => {
+    const controls = [...document.querySelectorAll<HTMLElement>(".today__stream a, .today__stream button")].filter((el) => !(el as HTMLButtonElement).disabled);
+    controls[controls.length - 1]?.focus();
+  });
+  await page.keyboard.press("Tab");
+  expect(await page.evaluate(() => document.activeElement?.closest(".constellation__list") !== null)).toBe(true);
+
+  // The relations the dial draws as lines are stated in words beside the thoughts they join.
+  if ((await page.locator(".constellation__edge").count()) > 0) {
+    const links = page.locator(".constellation__list-links");
+    expect(await links.count()).toBeGreaterThan(0);
+    await expect(links.first()).toContainText(/supports|contradicts|depends on|causes|derived from|analogous to|contains|requires|answers|questions|extends|supersedes|related to/);
+  }
+});
+
 test("A6: the constellation shows no more than 12 related nodes", async ({ page }) => {
   const nodes = page.locator(".constellation__node");
 

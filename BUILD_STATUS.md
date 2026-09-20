@@ -1,8 +1,83 @@
 # PCF Build Status
 
 ## Current phase
-Phase 6 — Cognitive return: COMPLETE, uncommitted, awaiting human review. Not committed, not tagged. Phase 7 not started.
-Phase 5 approved and checkpointed at commit `a43e40b`, tag `pcf-v0.1-phase-5`.
+Phase 7 — Strict v0.1 closure (product polish): COMPLETE, uncommitted, awaiting human review. Not committed, not tagged. The §44 real-use test has not started.
+Phase 6 approved and checkpointed at commit `f03be78`, tag `pcf-v0.1-phase-6`.
+
+## Phase 7 requirements
+- SPEC §41 Phase 7: "Only spacing, typography, loading states, error states, keyboard usability, basic accessibility. No feature expansion."
+- Contracts: §36 Visual Constitution, §37 Accessibility, §38 Performance Targets and operation-state wording, §28 error wording, §25B keyboard capture, §43 Definition of Done.
+- Scope ruling (2026-09-20): Phase 7 contains only frozen-authorized work. Mark resolved, reopen, relation accept/reject, a capture-retry control and a Saturn "try again" control are new product semantics and are **not** in Phase 7; they stay recorded in `OPEN_QUESTIONS.md` for the post-v0.1 contract.
+
+## Phase 7 as implemented
+No route, event type, schema, engine, AI invocation, dependency or product semantics changed. `git diff --stat HEAD -- lib app/api` is empty.
+
+### Bug fixes (each against a frozen requirement, each with a regression test)
+| Defect | Frozen requirement | Fix | Test |
+|---|---|---|---|
+| After an operator run finished, keyboard focus fell to `<body>`: the buttons are disabled while a run is in flight, so the focused button lost focus and nothing took it back (verified in-browser: `document.activeElement` was `BODY` after Connect completed). | §37 keyboard focus states | `OperatorBar` remembers whether focus was inside the bar, re-enables the buttons with `flushSync`, and returns focus to the pressed button. The `inFlight` guard and the `disabled` state are unchanged (Phase 5 accepted decision). | `operators.spec.ts` "operators are reachable and usable from the keyboard" now asserts the pressed button is focused again; fails with the pre-fix component, passes now |
+| After operator feedback, the Useful / Not useful buttons are replaced by the confirmation and focus was lost. | §37 | The confirmation paragraph takes focus (`tabIndex=-1`). | same test asserts "Thanks — recorded." is focused |
+| Return card: Useful disables both buttons (focus lost); Dismiss removes the card (focus lost). Tension card: "Not a conflict" removes the card (focus lost). | §37 | Useful hands focus to the Open link; removing a card hands focus to the capture field. | existing Return/Tension flows unchanged; focus handling is presentation |
+| The 12 constellation node links were keyboard tab stops with no visible focus and — because the dial is `role="img"` — were never exposed to assistive technology at all. | §37 keyboard focus states; graph information outside the picture | Node links are pointer targets only (`tabIndex=-1`); the text list beneath the dial (same hrefs) is the keyboard and screen-reader path. The dead `:focus-visible circle` rule was removed. | `today.spec.ts` "the constellation is read and navigated through its text list": nodes carry `tabindex="-1"` and Tab out of the stream lands in the list; fails with the pre-fix component |
+| Relations between visible thoughts were drawn as lines only; the text list said nothing about them. | §37 "graph information accessible outside pure visual representation" | Each listed thought states its relations in words ("supports X" / "X supports this"). | same test asserts the list names a relation type whenever edges are drawn |
+| Operator results appeared silently for screen-reader users (the running status cleared to empty). | §38 "must show clear operation state" | Results render inside a polite live region. | same operators test asserts `[aria-live="polite"] .operator` |
+
+### Polish (presentation only)
+- §36 spacing: the stream column is capped at 820 px for line length; gutters step down to 24 px below 900 px and 16 px below 600 px (they were 48 px on a 375 px phone, leaving ~280 px of text); the date scales to 24 px on phones; the selected-thought rule follows the smaller gutter.
+- §36 minimal chrome: the relation words in the constellation list are 12 px muted text; the Tension note is a plain sentence. No colour, accent, geometry constant or wording changed.
+
+### Verified, no change needed
+§25B Cmd/Ctrl+Enter captures; the field clears only after the server confirms. Visible 2 px accent focus rings on every control. Operator buttons carry text labels beside the symbols (`aria-hidden` on the symbol). Selection is shown by a rule **and** the words "In the constellation centre" plus `aria-current`. Error and status text use `role="status"`; §28 messages are shown verbatim; with Claude unavailable capture, Today, the stream and the constellation keep working (tested). Contrast: muted `#6f6c64` on `#fbfaf7` ≈ 4.9:1 and on white ≈ 5.0:1; accent `#3d5a80` on the page ≈ 6.9:1; the error state is conveyed by wording, not colour. Heading order h1→h5 is coherent; `lang="en"`; landmarks present; no motion exists.
+
+## Phase 7 acceptance gates (2026-09-20)
+| Gate | Result |
+|------|--------|
+| `npm test` | PASS: 26 files, 391 tests (unchanged: Phase 7 touched no engine) |
+| `npx tsc --noEmit` | PASS |
+| `npm run build` | PASS (built by the production Playwright project) |
+| `npm run test:e2e` | PASS: 83 passed, 1 production-only test skipped on dev, against the production build and the dev server (A1–A8 plus the capture, constellation, operator and cognitive-return suites; two new §37 assertions) |
+| Regression validity | both new §37 assertions fail with the pre-fix components stashed and pass with the fixes |
+| §38 Today initial render | production build, seeded DB: TTFB 8–17 ms over six requests to `/?focus=seed-06`; `/api/today` with nothing pending 2–25 ms; target < 1 s |
+| §38 local interactions | engines at 20,000 objects: constellation build 15.7 ms, candidate pool 11.2 ms, resurfacing candidates 40.2 ms, first return 36.0 ms, reload 0.8 ms, pair selection 1.7 ms; target < 150 ms |
+| Mutation checks | not applicable: no engine or route code changed; the Phase 5 same-task three-click guard test still passes |
+| Subscription boundary (§34) | PASS: no SDK, no API-key path (the only `ANTHROPIC_API_KEY` reference is the Phase 2 strip-list) |
+| Future-research scan | none |
+| `SPEC.md`, `CLAUDE.md`, migrations, schema, event set, routes, `package.json`, lockfile | unchanged |
+
+## §43 Definition-of-Done audit (2026-09-20)
+| Requirement | Authoritative section | Automated test / manual check | Result | Notes |
+|---|---|---|---|---|
+| app opens directly to Today | §25, §43 | `app/page.tsx` renders `TodayView` at `/`; A1 (`today.spec.ts`) | PASS | no landing page, no login |
+| user can capture a raw thought without organizing it | §25B | A3 (`capture.spec.ts`); `tests/integration/capture*.test.ts` | PASS | one field, no folders or tags |
+| raw thought persists before AI inference | §15 | capture integration tests: raw row and OBJECT_CAPTURED exist before any reasoner call, including on failure | PASS | |
+| AI extracts structured cognitive metadata | §14 | capture integration tests (mock reasoner); live preflights in Phases 3 and 5 | PASS | |
+| every object receives a validated 12-house vector | §13 | house-classifier tests including the fallback vector | PASS | |
+| concepts and claims persist locally | §10, §14 | capture integration tests; `contradiction.test.ts` reads persisted claims | PASS | |
+| relation candidates can be inferred | §17, §18 | relation-inference tests | PASS | created as `proposed`; the accept/reject control is a recorded post-v0.1 gap |
+| current object produces deterministic contextual constellation | §21, §25G | constellation tests; A5 | PASS | |
+| constellation contains ≤12 related objects | §21 | A6 (12 of 15 candidates on seed-06) | PASS | |
+| Mercury can Connect / Jupiter can Expand / Saturn can Challenge / Mars can Act | §23 | `operators.test.ts` (§32 operator test); A4; live preflight 2026-09-18 | PASS | Saturn provider intermittency recorded in OPEN_QUESTIONS |
+| one old relevant thought can resurface | §22, §25E | `resurfacing.test.ts`; A7, A8; §22 Return tests | PASS | |
+| contradictory claims can produce a Tension card | §24, §25F | `contradiction.test.ts` (§32 fixture); cognitive-return spec | PASS | |
+| feedback events persist | §10, §26 | feedback tests for operator runs, objects and tension dismissal | PASS | |
+| application remains usable when Claude is unavailable | §28 | capture, operator and today "unavailable" tests: 200 responses, nothing lost, nothing written | PASS | |
+| canonical data survives restart | §7, §10 | **manual**, read-only: `sqlite3 -readonly data/pcf.db` on 2026-09-20 shows 20 objects (2026-05-19 → 2026-09-18), 85 events, 6 operator runs, after repeated server stops since 2026-09-17 | PASS | SELECT only; the real database was not modified |
+| Claude subscription is used through installed Claude Code CLI | §16, §34 | `tests/unit/claude-subscription.test.ts`; the adapter spawns `claude -p` only; `npm run preflight` | PASS | |
+| Anthropic API SDK is absent | §34 | `package.json` has no `@anthropic-ai/sdk`; scan clean | PASS | |
+| no prohibited v0.1 feature has been added | §40 | future-research scan; §40 review of the Phase 7 diff | PASS | |
+| full automated suite passes | §30 | vitest and Playwright gates above | PASS | |
+| production build succeeds | §43 | `npm run build` | PASS | |
+
+## Phase 7 interpretation decisions (non-blocking)
+- Constellation node links are pointer-only targets. §37 asks for keyboard focus states and for graph information outside the picture; the dial is an image and the text list already carries the same links, so the honest keyboard path is the list. No target became unreachable.
+- Relation wording in the list is the frozen relation type with underscores replaced ("depends on", "related to"); direction reads "supports X" versus "X supports this".
+- Focus after an action goes to the nearest still-meaningful existing control (the pressed operator, the Open link, the capture field); no new element was added to hold it.
+
+## Phase 7 deviations from SPEC.md
+- none. `SPEC.md` unchanged.
+
+## Phase 7 blockers
+- none. Post-v0.1 gaps remain in `OPEN_QUESTIONS.md` (capture retry surface, Saturn intermittency, relation accept/reject, mark resolved) and were not implemented.
 
 ## Phase 6 requirements
 - SPEC §41 Phase 6: resurfacing engine, contradiction detection, Return card, Tension card. Acceptance: A7 and A8.
@@ -658,4 +733,4 @@ Not added yet (later phases): `zod` (Phase 1), `@anthropic-ai/sdk` (never).
 | 4 — Relevance + constellation | approved, tag `pcf-v0.1-phase-4` | npm test PASS (267), build PASS, e2e PASS (A1-A3, A5, A6) |
 | 3 — Capture intelligence | approved, tag `pcf-v0.1-phase-3` | npm test PASS (231), build PASS, e2e PASS (A1-A3 + 13 capture tests, production and dev) |
 | 6 — Cognitive return | complete, uncommitted, awaiting review | npm test PASS (390), build PASS, e2e PASS (A1-A8, 79), §32 contradiction test PASS, mutations 15/15 |
-| 7 — Product polish | not started | — |
+| 7 — Product polish | complete, uncommitted, awaiting review | npm test PASS (391), build PASS, e2e PASS (83), §43 audit PASS |

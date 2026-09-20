@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CognitiveOperator } from "@/lib/domain/types";
 
 /** The four §23 result shapes, as returned by the operator route. */
@@ -178,6 +178,11 @@ function Body({ operator, result, titleOf }: { operator: CognitiveOperator; resu
 /** Feedback on the result (SPEC §26, §39). It is recorded beside the result and never changes it. */
 function Feedback({ runId }: { runId: string }) {
   const [state, setState] = useState<"idle" | "sending" | "done" | "error">("idle");
+  const done = useRef<HTMLParagraphElement>(null);
+  // The buttons that had focus are gone once feedback is recorded; the confirmation takes it (SPEC §37).
+  useEffect(() => {
+    if (state === "done") done.current?.focus({ preventScroll: true });
+  }, [state]);
 
   async function send(action: "useful" | "not_useful") {
     if (state === "sending" || state === "done") return;
@@ -194,7 +199,13 @@ function Feedback({ runId }: { runId: string }) {
     }
   }
 
-  if (state === "done") return <p className="operator__feedback" role="status">Thanks — recorded.</p>;
+  if (state === "done") {
+    return (
+      <p ref={done} className="operator__feedback" role="status" tabIndex={-1}>
+        Thanks — recorded.
+      </p>
+    );
+  }
   return (
     <p className="operator__feedback">
       <span className="operator__feedback-label">Was this useful?</span>

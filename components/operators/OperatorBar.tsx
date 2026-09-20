@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { OperatorResult, type OperatorRunResult } from "./OperatorResult";
 import type { CognitiveOperator } from "@/lib/domain/types";
 
@@ -24,10 +25,14 @@ export function OperatorBar({ objectId }: { objectId: string }) {
   const [run, setRun] = useState<OperatorRunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const bar = useRef<HTMLDivElement>(null);
 
   async function invoke(operator: CognitiveOperator) {
     if (inFlight.current) return;
     inFlight.current = true;
+    // The buttons are disabled while a run is in flight, which drops keyboard focus to the page. Remember
+    // whether focus was in the bar so it can be returned to the same button afterwards (SPEC §37).
+    const hadFocus = bar.current?.contains(document.activeElement) ?? false;
     setRunning(operator);
     setError(null);
     try {
@@ -49,18 +54,20 @@ export function OperatorBar({ objectId }: { objectId: string }) {
       setError(FAILED);
     } finally {
       inFlight.current = false;
-      setRunning(null);
+      flushSync(() => setRunning(null));
+      if (hadFocus) bar.current?.querySelector<HTMLButtonElement>(`[data-operator="${operator}"]`)?.focus({ preventScroll: true });
     }
   }
 
   const busy = running !== null;
   return (
     <div className="operators">
-      <div className="operators__bar" role="group" aria-label="Cognitive operators">
+      <div ref={bar} className="operators__bar" role="group" aria-label="Cognitive operators">
         {OPERATORS.map(({ operator, symbol, name }) => (
           <button
             key={operator}
             type="button"
+            data-operator={operator}
             className={running === operator ? "operators__button operators__button--active" : "operators__button"}
             onClick={() => void invoke(operator)}
             disabled={busy}
@@ -73,8 +80,9 @@ export function OperatorBar({ objectId }: { objectId: string }) {
       <p className="operators__state" role="status">
         {running ? OPERATORS.find((o) => o.operator === running)?.running : error}
       </p>
-      {/* Keyed by run: a new result must never inherit the previous result's feedback state. */}
-      {run && <OperatorResult key={run.runId} run={run} />}
+      {/* A polite live region: the result is announced when it arrives. Keyed by run, so a new result never
+          inherits the previous result's feedback state. */}
+      <div aria-live="polite">{run && <OperatorResult key={run.runId} run={run} />}</div>
     </div>
   );
 }

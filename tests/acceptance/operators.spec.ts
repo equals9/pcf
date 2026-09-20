@@ -185,11 +185,18 @@ test("operators are reachable and usable from the keyboard", async ({ page }) =>
   await page.keyboard.press("Enter");
   expect((await response).status()).toBe(200);
   await expect(card.getByRole("article", { name: /Challenge result/ })).toBeVisible();
+  // SPEC §37: the buttons were disabled during the run; focus comes back to the one that was pressed rather
+  // than falling to the page. The result arrives inside a polite live region, so it is announced.
+  await expect(challenge).toBeFocused();
+  await expect(card.locator('[aria-live="polite"] .operator')).toHaveCount(1);
 
   const useful = card.getByRole("button", { name: "Useful", exact: true });
   await useful.focus();
   await page.keyboard.press("Enter");
-  await expect(card.getByText("Thanks — recorded.")).toBeVisible();
+  const recorded = card.getByText("Thanks — recorded.");
+  await expect(recorded).toBeVisible();
+  // The buttons that had focus are gone; the confirmation holds it.
+  await expect(recorded).toBeFocused();
 });
 
 test("operator routes refuse requests addressed to another host", async ({ page }) => {

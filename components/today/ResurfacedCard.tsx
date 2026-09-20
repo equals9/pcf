@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { CognitiveObject } from "@/lib/domain/types";
 
 export interface ResurfacedThought {
@@ -34,6 +34,7 @@ export function ResurfacedCard({ resurfaced, href }: { resurfaced: ResurfacedTho
   const [recorded, setRecorded] = useState<"useful" | "dismissed" | null>(null);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const open = useRef<HTMLAnchorElement>(null);
 
   async function record(action: "useful" | "opened" | "dismissed") {
     if (busy) return;
@@ -52,7 +53,13 @@ export function ResurfacedCard({ resurfaced, href }: { resurfaced: ResurfacedTho
         return;
       }
       if (action !== "opened") setRecorded(action);
-      if (action === "dismissed") router.refresh();
+      // Useful disables the two buttons and Dismiss removes the card, so keyboard focus would fall to the
+      // page: hand it to the Open link, or to the capture field once the card is gone (SPEC §37).
+      if (action === "useful") open.current?.focus({ preventScroll: true });
+      if (action === "dismissed") {
+        document.getElementById("capture")?.focus({ preventScroll: true });
+        router.refresh();
+      }
     } catch {
       if (action !== "opened") setFailed(true);
     } finally {
@@ -76,7 +83,7 @@ export function ResurfacedCard({ resurfaced, href }: { resurfaced: ResurfacedTho
           <span className="return__why">Why this returned: {why}</span>
         </p>
         <p className="return__actions">
-          <Link className="return__open" href={href} onClick={() => void record("opened")}>
+          <Link ref={open} className="return__open" href={href} onClick={() => void record("opened")}>
             Open
           </Link>
           <button type="button" className="return__button" onClick={() => void record("useful")} disabled={busy || recorded !== null}>

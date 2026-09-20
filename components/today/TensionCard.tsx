@@ -50,6 +50,8 @@ export function TensionCard({ tension }: { tension: TensionView }) {
       });
       if (res.ok) {
         setDismissed(true);
+        // The card disappears with the focused button in it; the capture field takes focus (SPEC §37).
+        document.getElementById("capture")?.focus({ preventScroll: true });
         router.refresh();
       }
     } catch {
