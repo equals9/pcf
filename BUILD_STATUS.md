@@ -1,8 +1,76 @@
 # PCF Build Status
 
 ## Current phase
-Phase 5 — Four cognitive operators: COMPLETE and approved. Checkpointed with tag `pcf-v0.1-phase-5`. Phase 6 not started.
-Phase 4 approved and checkpointed at commit `fd76f9a`, tag `pcf-v0.1-phase-4`.
+Phase 6 — Cognitive return: COMPLETE, uncommitted, awaiting human review. Not committed, not tagged. Phase 7 not started.
+Phase 5 approved and checkpointed at commit `a43e40b`, tag `pcf-v0.1-phase-5`.
+
+## Phase 6 requirements
+- SPEC §41 Phase 6: resurfacing engine, contradiction detection, Return card, Tension card. Acceptance: A7 and A8.
+- Contracts: §22 (resurfacing score, one thought, 24-hour activation rule, renormalization when Today is empty), §24 (claim pairing, six classifications, top 6 pairs, surface at confidence ≥ 0.65), §25E, §25F, §26 (`GET /api/today`), §11 (frozen event types), §28, §29, §32 contradiction test, §33 A7 and A8, §38 wording.
+
+## Phase 6 as implemented
+- **Resurfacing (`lib/engine/resurfacing.ts`).** Deterministic and AI-free. Score is the frozen §22 sum: 0.45 × max §19 relevance to today's thoughts + 0.25 × unresolvedness + 0.15 × min(daysOld/60, 1) + 0.15 × importance; with nothing captured today the relevance term is dropped and the other three are renormalized. Candidates are objects created before today, not archived, not activated in the previous 24 hours, and not dismissed today. §19 is used in full, including the real feedback affinity for the candidate. One thought is chosen; ties go to the older thought, then the lower id.
+- **One return per day, not per reload.** The first render of the day records one OBJECT_RESURFACED event; later renders replay that same thought and write nothing. The reload path scores through the same `scoreCandidate` used to choose it, so the card's score and its "Why this returned" line are identical on every reload.
+- **"Why this returned" is derived, never generated.** It names the highest-weight term that actually fired and says only what the score measured: shared ground with today's thinking (gated on genuine concept/house/graph closeness, not on time or feedback alone), still unresolved, written a long time ago, or read as important when captured. Importance is an extraction estimate and age is the capture date, so neither is worded as something the user did.
+- **Contradiction detection (`lib/engine/contradiction.ts`).** Claim pairs are formed only between the focus object's claims and the claims of objects sharing a normalized concept, never with itself, ordered by subject then subject+predicate priority, capped at the frozen 6 pairs, with already-classified pairs skipped. Exactly one reasoner call per object. Output is schema-validated with the claim ids restricted to the pairs that were actually sent, so a verdict can only be about a real pair.
+- **Verdicts are history.** Each classification is appended as a CONTRADICTION_DETECTED event; a "pairs checked, nothing found" marker is recorded too, so the same pairs are never paid for twice. Claims, thoughts, beliefs and relations are untouched: the detector classifies, it never decides which claim is right.
+- **Tension surface.** `currentTension` replays the recorded verdicts and returns the highest-confidence pair that is `true_contradiction`, `partial_tension`, `temporal_change` or `supersession` at confidence ≥ 0.65 and has not been dismissed. `dismissTension` writes one feedback row and one CONTRADICTION_DISMISSED event in a single transaction; the verdict and both claims survive, the pair simply stops being surfaced.
+- **`GET /api/today` (`app/api/today/route.ts`).** The frozen §26 read, and the single place §24 detection runs. It **can** launch the Claude CLI: on each request `pendingCheckObjectId` looks through today's objects, newest first, for one that holds a claim and still has an unclassified claim pair (a non-archived object sharing a normalized concept holds a claim, and no CONTRADICTION_DETECTED verdict or marker covers the pair). If there is one, `detectContradictions` makes exactly one `runStructured` call for it (the Phase 2 adapter's single retry applies, so at most 2 CLI invocations); otherwise the request is a pure read. A successful check records every pair it sent, so the object stops being pending; a failed check records nothing, so the object stays pending and the **next** request tries once more — one logical call per request, never a retry within one. Loopback-only, plus a fetch-metadata check so a cross-site markup GET (which carries no Origin) cannot spend a model call. A failed classification still returns Today.
+- **Who calls `GET /api/today`.** Only `CaptureBox`, once, after a confirmed capture (plus a direct address-bar visit). Rendering the Today page (`GET /`) does not: `TodayView` calls `resurfaceForToday` and `currentTension` directly, both AI-free reads, and never fetches the route. So a page reload never reaches Claude; a capture reaches it at most once, and only while an unclassified claim pair exists among today's thoughts.
+- **Today UI.** §25E Return card (RETURN, title, excerpt, age, why, Open / Useful / Dismiss) and §25F Tension card (claim A, claim B, classification, explanation, and exactly two actions: Open both, Not a conflict). Feedback is only reported as recorded when the server confirms it. Both cards are keyed by the item they show, so no client state leaks from one thought or pair to the next. After a successful capture, CaptureBox asks `GET /api/today` to run the check; a capture made while a check is running is queued, never dropped, and the check never touches the draft, the constellation focus or the `?focus=` URL.
+
+## Phase 6 acceptance gates (2026-09-18)
+| Gate | Result |
+|------|--------|
+| `npm test` | PASS: 26 files, 391 tests |
+| `npx tsc --noEmit` | PASS |
+| `npm run build` | PASS; `/api/today` renders per request, all six routes present |
+| `npm run test:e2e` | PASS: 81 passed, 1 production-only test skipped on dev, against the production build and the dev server |
+| Mutation checks | 15 of 15 injected Phase 6 regressions fail the suite; the first pass left 4 survivors (the §19 feedback term, the §25E closeness gate, the same-day dismissal filter and the local `date`), each of which was a missing test rather than dead code, and each now has one |
+| A7, A8 | PASS |
+| SPEC §32 contradiction test | PASS: the two memory claims classify as `true_contradiction` at 0.9 and surface one tension |
+| Subscription boundary (§34) and no-real-claude guard | PASS: tests use the mock reasoner or the fake CLI; no SDK, no API key path |
+| Loopback security | PASS: `/api/today` refuses a foreign Host, a missing Host, a foreign Origin and cross-site markup loads, with no reasoner call and no writes |
+| Canonical state | PASS: a Today render changes no object, claim, relation or house score; the only write is at most one OBJECT_RESURFACED plus recorded verdicts |
+| Schema and migrations | unchanged — no migration, no new table, no new event type |
+| Phase 0-5 invariants | unchanged versus `pcf-v0.1-phase-5` |
+| §38 performance (20,000 objects, 6,666 claims) | resurfacing candidates 41.5 ms, first return of the day 33.7 ms, same-day reload 0.6 ms, §24 pair selection 1.6 ms, current tension 0.1 ms — against a <150 ms local target |
+| Future-research scan | none |
+| Dependencies | unchanged |
+
+## Phase 6 interpretation decisions (non-blocking)
+- **Detection trigger.** §24 needs a model call but says nothing about when it runs, and §25 requires Today to render local state. The check therefore runs inside `GET /api/today` (the frozen §26 read), for at most one pending object per request, and CaptureBox calls it once after a confirmed capture. Rendering the Today page (`GET /`) never calls Claude; `GET /api/today` makes at most one classification call per request, and none once every pair among today's claims has a recorded verdict or marker. A failed check is not retried inside the request; the next `GET /api/today` (the next capture, or a direct visit) tries once more. §28 is honoured: with Claude unavailable the route still returns Today and writes nothing.
+- **Where verdicts live.** The frozen schema has no contradictions table and §11 freezes the event types, so verdicts are CONTRADICTION_DETECTED events and dismissals are CONTRADICTION_DISMISSED events. No table and no event type was invented.
+- **One per day.** §22 says one returned thought, and a feed of old thoughts on every reload would be a different product. The day's choice is recorded once and replayed.
+- **Activation.** "Activated in the previous 24 hours" is read as any evidence the user touched the thought: OBJECT_RESURFACED, OBJECT_OPENED or OPERATOR_INVOKED, or feedback of `opened`, `useful`, `saved` or `acted_on`.
+- **Bounded candidates.** Resurfacing considers the newest, the oldest and the most important pre-today objects (100 each) rather than the whole store, so a very old or very important thought stays reachable while the work per render stays flat.
+- **"Open both".** §25F freezes two actions, so Open both opens both source thoughts inside the card, unedited, rather than navigating to one of them and offering a third action for the other.
+- **Additive response fields.** `GET /api/today` returns the frozen `date`, `objects`, `resurfaced` and `tension`, plus `checked` (the object classified on this request, or null) so the client knows whether to re-render; `resurfaced` carries `why` and `ageDays` alongside the object. Additive only, as with the Phase 5 operator response.
+- **Local date.** `date` and the date header use the local calendar date; a UTC slice reported the previous day for every timezone east of UTC (this also fixed a Phase 0 bug in `DateHeader`).
+
+## Phase 6 skeptical review (2026-09-18)
+Multi-lens adversarial review: 27 confirmed findings, about 15 distinct defects, all fixed and pinned by tests. The ones that mattered:
+- the reload path rebuilt the score with no relevance term, so the Return card's score and reason changed after the first render of the day;
+- a newest-200 candidate window made genuinely old thoughts unreachable — exactly the thoughts §22 exists to return;
+- activation ignored operator runs and feedback, so a thought the user had just worked on could return;
+- the §19 feedback term was hardcoded to 0.5 instead of the candidate's real feedback;
+- "close to today" fired on trivial relevance, and two reasons attributed an AI estimate ("You marked it as important") or the wrong quantity ("not looked at in a long time", computed from creation age) to the user;
+- §24 candidates were bounded by objects rather than claim-bearing objects, and the same pair was classified twice, once from each side, costing a second Claude call;
+- a cross-site markup GET could pass the loopback check and spend a Claude call;
+- the Return card reported feedback as recorded even when the write failed;
+- the Tension card's "Open both" opened one claim, offered a third action, and claimed the shown claims were the user's exact words when they are extraction's normalization;
+- a capture made while a tension check was running had its own check dropped.
+
+## Phase 6 closure verification (2026-09-19)
+Two review questions were checked before checkpointing.
+1. **Claude-call semantics of `GET /api/today`.** The earlier report said both "detection runs inside `GET /api/today`" and "rendering Today never calls Claude". The implementation is correct and unchanged; the wording was imprecise and is corrected above: the *page* (`GET /`) never calls Claude, the *route* may make one classification call per request while a pending pair exists. Established by `tests/integration/today-route.test.ts` ("classifies one unchecked object per request", "still returns Today when classification fails" — now also pinning one further call on the next request and none within one, "never calls the reasoner when no object has claims", the four refusal cases, and "is the only path to the reasoner"), and by `tests/acceptance/cognitive-return.spec.ts` ("reloading Today never requests /api/today").
+2. **`.claude/launch.json`.** Local desktop-preview tooling created during this session, referenced by nothing in the repository or the SPEC. Removed; nothing was added in its place.
+
+## Phase 6 deviations from SPEC.md
+- none. `SPEC.md` unchanged.
+
+## Phase 6 blockers
+- none
 
 ## Phase 5 requirements
 - SPEC §41 Phase 5: Connect, Expand, Challenge, Act, retrieval packets, operator persistence, feedback buttons. Acceptance: all four structured contracts green.
@@ -589,5 +657,5 @@ Not added yet (later phases): `zod` (Phase 1), `@anthropic-ai/sdk` (never).
 | 5 — Four operators | approved, tag `pcf-v0.1-phase-5` | npm test PASS (330), build PASS, e2e PASS (A1-A6), live preflight run, mutations 20/20 |
 | 4 — Relevance + constellation | approved, tag `pcf-v0.1-phase-4` | npm test PASS (267), build PASS, e2e PASS (A1-A3, A5, A6) |
 | 3 — Capture intelligence | approved, tag `pcf-v0.1-phase-3` | npm test PASS (231), build PASS, e2e PASS (A1-A3 + 13 capture tests, production and dev) |
-| 6 — Cognitive return | not started | — |
+| 6 — Cognitive return | complete, uncommitted, awaiting review | npm test PASS (390), build PASS, e2e PASS (A1-A8, 79), §32 contradiction test PASS, mutations 15/15 |
 | 7 — Product polish | not started | — |

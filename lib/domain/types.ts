@@ -103,6 +103,24 @@ export interface ConstellationEdge {
   confidence: number;
 }
 
+// SPEC.md §24 — contradiction detection over claim pairs.
+export type ContradictionClass =
+  | "true_contradiction"
+  | "partial_tension"
+  | "scope_difference"
+  | "temporal_change"
+  | "supersession"
+  | "none";
+
+export interface ContradictionResult {
+  claimAId: string;
+  claimBId: string;
+  classification: ContradictionClass;
+  confidence: number;
+  explanation: string;
+  unresolvedQuestion: string | null;
+}
+
 // SPEC.md §11 — append-only event types.
 export type EventType =
   | "OBJECT_CAPTURED"

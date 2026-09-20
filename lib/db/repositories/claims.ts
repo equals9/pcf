@@ -41,6 +41,11 @@ export function insertClaim(db: PcfDatabase, input: Claim, createdAt: string): C
   return c;
 }
 
+export function getClaim(db: PcfDatabase, id: string): Claim | null {
+  const row = db.prepare("SELECT * FROM claims WHERE id = ?").get(id) as ClaimRow | undefined;
+  return row ? rowToClaim(row) : null;
+}
+
 export function listClaimsForObject(db: PcfDatabase, objectId: string): Claim[] {
   const rows = db.prepare("SELECT * FROM claims WHERE object_id = ? ORDER BY created_at, id").all(objectId) as ClaimRow[];
   return rows.map(rowToClaim);

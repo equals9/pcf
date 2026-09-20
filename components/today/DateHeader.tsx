@@ -1,3 +1,5 @@
+import { localDateString } from "@/lib/utils/time";
+
 /** Weekday, month, day of the current local date (SPEC.md §25A). No statistics. */
 export function DateHeader() {
   const now = new Date();
@@ -9,7 +11,7 @@ export function DateHeader() {
   return (
     <header className="today__header">
       <h1 className="today__date">
-        <time dateTime={now.toISOString().slice(0, 10)}>{label}</time>
+        <time dateTime={localDateString(now)}>{label}</time>
       </h1>
     </header>
   );

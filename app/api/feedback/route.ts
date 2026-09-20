@@ -1,6 +1,7 @@
 import { getAppDatabase } from "../../../lib/db/database";
 import { feedbackActionSchema } from "../../../lib/domain/schemas";
 import type { FeedbackAction } from "../../../lib/domain/types";
+import { TENSION_FEEDBACK_TARGET, dismissTension } from "../../../lib/engine/contradiction";
 import { FEEDBACK_TARGET_TYPES, recordFeedback, type FeedbackTargetType } from "../../../lib/engine/operator-runner";
 import { isLoopbackRequest } from "../../../lib/utils/local-request";
 
@@ -29,6 +30,26 @@ export async function POST(request: Request): Promise<Response> {
     return fail(400, { error: "invalid_request", message: "The request body is not valid JSON." });
   }
   const { targetType, targetId, action } = (body ?? {}) as { targetType?: unknown; targetId?: unknown; action?: unknown };
+
+  // §25F "Not a conflict": a tension is dismissed by its claim pair, and the dismissal is recorded as both
+  // user feedback and a CONTRADICTION_DISMISSED event.
+  if (targetType === TENSION_FEEDBACK_TARGET) {
+    const { claimAId, claimBId } = (body ?? {}) as { claimAId?: unknown; claimBId?: unknown };
+    if (typeof claimAId !== "string" || typeof claimBId !== "string" || claimAId.length === 0 || claimBId.length === 0) {
+      return fail(400, { error: "invalid_request", message: 'Send {"targetType": "contradiction", "claimAId": "...", "claimBId": "..."}.' });
+    }
+    try {
+      const outcome = dismissTension(getAppDatabase(), { claimAId, claimBId });
+      if (outcome.status === "target_not_found") {
+        return fail(404, { error: "not_found", message: "No claim pair with those ids." });
+      }
+      return Response.json(outcome.feedback);
+    } catch (err) {
+      console.error(`[pcf feedback] ${JSON.stringify({ operation: "dismiss-tension", outcome: "failed", errorKind: err instanceof Error ? err.name : typeof err })}`);
+      return fail(500, { error: "feedback_failed", message: "Your feedback could not be recorded." });
+    }
+  }
+
   if (
     typeof targetType !== "string" ||
     !FEEDBACK_TARGET_TYPES.includes(targetType as FeedbackTargetType) ||
@@ -36,7 +57,7 @@ export async function POST(request: Request): Promise<Response> {
     targetId.length === 0 ||
     !feedbackActionSchema.safeParse(action).success
   ) {
-    return fail(400, { error: "invalid_request", message: 'Send {"targetType": "operator_run" | "object", "targetId": "...", "action": "..."}.' });
+    return fail(400, { error: "invalid_request", message: 'Send {"targetType": "operator_run" | "object" | "contradiction", ...}.' });
   }
 
   try {

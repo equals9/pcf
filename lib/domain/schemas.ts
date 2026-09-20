@@ -88,6 +88,24 @@ export const claimSchema = z.object({
   validTo: isoTimestampSchema.nullable(),
 });
 
+export const contradictionClassSchema = z.enum([
+  "true_contradiction",
+  "partial_tension",
+  "scope_difference",
+  "temporal_change",
+  "supersession",
+  "none",
+]);
+
+export const contradictionResultSchema = z.object({
+  claimAId: z.string().min(1),
+  claimBId: z.string().min(1),
+  classification: contradictionClassSchema,
+  confidence: scoreSchema,
+  explanation: z.string().trim().min(1),
+  unresolvedQuestion: z.string().trim().min(1).nullable(),
+});
+
 export const cognitiveOperatorSchema = z.enum(COGNITIVE_OPERATORS as [string, ...string[]]);
 
 export const feedbackActionSchema = z.enum(["useful", "not_useful", "opened", "saved", "acted_on", "dismissed"]);

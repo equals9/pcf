@@ -66,6 +66,11 @@ export function CaptureBox() {
   const [content, setContent] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const inFlight = useRef(false);
+  const checking = useRef(false);
+  /** A capture made while a check is running: its thought still needs its own §24 pass. */
+  const queuedCheck = useRef<{ seq: number; message: string } | null>(null);
+  /** Which capture the status line belongs to, so a finished check never restores an older message. */
+  const captureSeq = useRef(0);
   const form = useRef<HTMLFormElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const saving = status.kind === "saving";
@@ -74,6 +79,7 @@ export function CaptureBox() {
     const text = input.current?.value ?? content;
     if (inFlight.current || text.trim() === "") return;
     inFlight.current = true;
+    const seq = ++captureSeq.current;
     setStatus({ kind: "saving" });
     const outcome = await send(text);
 
@@ -86,12 +92,44 @@ export function CaptureBox() {
 
     // Refresh only after a confirmed save. A refresh that cannot reach the server makes Next reload the
     // page, which would discard text the user still needs.
-    if (outcome.saved) router.refresh();
+    if (outcome.saved) {
+      router.refresh();
+      void checkForTension(seq, outcome.status.kind === "saved" ? outcome.status.message : "Captured.");
+    }
 
     // Return focus only if it was in the capture form (or dropped to the page when the button was disabled).
     const active = document.activeElement;
     if (active === null || active === document.body || form.current?.contains(active)) {
       input.current?.focus({ preventScroll: true });
+    }
+  }
+
+  /**
+   * §24 runs once per new thought, after the capture is safely stored: GET /api/today classifies the claims
+   * of the newest unchecked thought and records the verdicts, then Today re-renders with any new tension.
+   * It never blocks the capture, and a failure leaves the stored thought untouched.
+   */
+  async function checkForTension(seq: number, capturedMessage: string) {
+    // Two captures in quick succession are two thoughts: the second waits for the first check rather than
+    // being dropped, since a dropped check means a tension that is never looked for.
+    if (checking.current) {
+      queuedCheck.current = { seq, message: capturedMessage };
+      return;
+    }
+    checking.current = true;
+    const owns = () => seq === captureSeq.current;
+    if (owns()) setStatus({ kind: "saved", message: `${capturedMessage} Looking for tensions…` });
+    try {
+      const res = await fetch("/api/today", { headers: { Accept: "application/json" } });
+      if (res.ok && ((await res.json()) as { checked?: string | null }).checked) router.refresh();
+    } catch {
+      // Nothing was lost: the thought is stored and the check can run again on the next capture.
+    } finally {
+      checking.current = false;
+      if (owns()) setStatus((current) => (current.kind === "saved" ? { kind: "saved", message: capturedMessage } : current));
+      const next = queuedCheck.current;
+      queuedCheck.current = null;
+      if (next) void checkForTension(next.seq, next.message);
     }
   }
 

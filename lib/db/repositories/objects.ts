@@ -143,6 +143,23 @@ export function listRecentObjectIds(db: PcfDatabase, limit: number, excludeId: s
   return rows.map((r) => r.id);
 }
 
+/**
+ * Candidates for §22 resurfacing: the newest, the oldest and the most important objects from before
+ * `beforeIso`, each bounded by `limit`. Three bounded queries rather than one window, so a very old or very
+ * important thought stays reachable however much has been captured since.
+ */
+export function listResurfaceCandidates(db: PcfDatabase, beforeIso: string, limit: number): CognitiveObject[] {
+  if (limit <= 0) return [];
+  const query = (order: string) =>
+    db.prepare(`SELECT * FROM objects WHERE created_at < ? AND status <> 'archived' ORDER BY ${order} LIMIT ?`).all(beforeIso, limit) as ObjectRow[];
+  const rows = [...query("created_at DESC, id DESC"), ...query("created_at ASC, id ASC"), ...query("importance DESC, created_at ASC, id ASC")];
+  const seen = new Set<string>();
+  return rows
+    .filter((row) => !seen.has(row.id) && seen.add(row.id))
+    .map(rowToObject)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+}
+
 /** Objects created in [fromIso, toIso), newest first. */
 export function listObjectsCreatedBetween(db: PcfDatabase, fromIso: string, toIso: string): CognitiveObject[] {
   const rows = db

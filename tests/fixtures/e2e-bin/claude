@@ -7,6 +7,8 @@
 //   pcf-e2e-houses-invalid     house classification output fails validation (both attempts)
 //   pcf-e2e-relations-invalid  relation inference output fails validation (both attempts)
 //   pcf-e2e-operator-invalid   every operator's output fails validation (both attempts)
+//   pcf-e2e-claim              extraction returns a claim, so the thought can take part in §24 detection
+//   pcf-e2e-no-tension         claim pairs are classified "none" instead of a contradiction
 //   pcf-e2e-unavailable        every structured call reports a provider error
 //   pcf-e2e-slow               every structured call waits 1.5 s first
 import { readFileSync } from "node:fs";
@@ -26,7 +28,9 @@ if (args[0] === "--version") {
 const schemaIndex = args.indexOf("--json-schema");
 const schema = schemaIndex >= 0 ? JSON.parse(args[schemaIndex + 1]) : {};
 const keys = Object.keys(schema.properties ?? {});
-const task = keys.includes("scores")
+const task = keys.includes("results")
+  ? "contradiction"
+  : keys.includes("scores")
   ? "classify"
   : keys.includes("proposals")
     ? "relations"
@@ -56,7 +60,9 @@ const content =
         ? input.source.content
         : OPERATORS.includes(task)
           ? input.focus.content
-          : "";
+          : task === "contradiction"
+            ? JSON.stringify(input.pairs)
+            : "";
 
 const envelope = (payload) =>
   JSON.stringify({ type: "result", subtype: "success", is_error: false, result: JSON.stringify(payload), structured_output: payload });
@@ -71,11 +77,24 @@ function respond() {
     case "extract": {
       if (content.includes("pcf-e2e-extract-invalid")) return envelope(invalid);
       const words = content.trim().split(/\s+/).slice(0, 4).join(" ");
+      const claims = content.includes("pcf-e2e-claim")
+        ? [
+            {
+              normalizedClaim: content.slice(0, 200),
+              subject: "personal AI memory",
+              predicate: "belongs",
+              objectText: "somewhere",
+              polarity: "positive",
+              scope: null,
+              confidence: 0.7,
+            },
+          ]
+        : [];
       return envelope({
-        type: "idea",
+        type: claims.length > 0 ? "claim" : "idea",
         title: `Extracted: ${words}`.slice(0, 80),
         concepts: [{ name: "e2e capture" }],
-        claims: [],
+        claims,
         unresolved: false,
         importanceEstimate: 0.6,
       });
@@ -140,6 +159,19 @@ function respond() {
         successCriterion: "Fake success.",
         failureCriterion: "Fake failure.",
         evidenceToCapture: ["Fake evidence."],
+      });
+    }
+    case "contradiction": {
+      const none = content.includes("pcf-e2e-no-tension");
+      return envelope({
+        results: input.pairs.map((pair) => ({
+          claimAId: pair.a.id,
+          claimBId: pair.b.id,
+          classification: none ? "none" : "true_contradiction",
+          confidence: 0.88,
+          explanation: none ? "They are about different things." : "One says memory belongs inside the weights; the other says outside.",
+          unresolvedQuestion: none ? null : "Where should personal memory live?",
+        })),
       });
     }
     case "relations": {

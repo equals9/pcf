@@ -27,7 +27,14 @@ Only genuine blockers belong here. This is not a wishlist.
 
 - **Status:** open, raised 2026-09-18. It does not block any phase.
 - **Gap:** relations are created as `proposed` (Phase 3) and Mercury suggests more (Phase 5), but §26 defines no endpoint and §25 defines no control for accepting or rejecting one. RELATION_ACCEPTED and RELATION_REJECTED exist in §11, the schema supports both statuses, and §19 and the constellation both read them, so the data path is ready and only the user action is missing. SPEC P9 says the user remains the authority over relations.
-- **Decision needed:** which phase gives the user that control, and through which request. Phase 6 works with the Tension card and may need it; otherwise Phase 7.
+- **Decision needed:** which phase gives the user that control, and through which request. Phase 6 did not need it — the Tension card works on claims and records a dismissal, never a relation — so the question now falls to Phase 7 or to post-v0.1.
+
+## Nothing can mark a thought resolved
+
+- **Status:** open, raised 2026-09-18 during Phase 6. It does not block any phase.
+- **Gap:** §22 scores `resolved` objects at 0 unresolvedness, the schema and domain types carry the `resolved` status, and the resurfacing engine reads it. But §25 defines no control and §26 no request that sets it, so in v0.1 a thought can never become resolved. The 0.25 unresolvedness term therefore never falls to zero for any real thought: an answered question keeps scoring as an open one and keeps coming back.
+- **Current state:** the engine honours the status correctly wherever it is set; only the user action is missing. Nothing was invented to fill the gap.
+- **Decision needed:** whether v0.1 gives the user a way to mark a thought resolved (and, if so, which phase and which request), or whether that waits for post-v0.1. This is the same family of question as accepting a proposed relation.
 
 ## Resolved
 
